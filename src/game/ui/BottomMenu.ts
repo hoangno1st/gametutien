@@ -31,6 +31,10 @@ import type { BreakthroughRewardSystem } from "../cultivation/BreakthroughReward
 import { CULTIVATION_LAYERS_PER_STAGE } from "../cultivation/cultivationConfig";
 import { Player } from "../entities/Player";
 import type { EquipmentInstance } from "../equipment/EquipmentInstance";
+import {
+    EquipmentComparisonService,
+    type EquipmentComparison,
+} from "../equipment/EquipmentComparisonService";
 import { EquipmentManager } from "../equipment/EquipmentManager";
 import type { EquipmentSalvageManager } from "../equipment/EquipmentSalvageManager";
 import { EquipmentSalvageFailReason } from "../equipment/EquipmentSalvageManager";
@@ -169,6 +173,7 @@ export class BottomMenu {
     private equipmentSalvageManager: EquipmentSalvageManager;
     private equipmentStatUnlockManager: EquipmentStatUnlockManager;
     private equipmentRerollManager: EquipmentRerollManager;
+    private equipmentComparisonService = new EquipmentComparisonService();
     private artifactManager: ArtifactManager;
     private techniqueManager: TechniqueManager;
     private skillManager: SkillManager;
@@ -1424,11 +1429,18 @@ export class BottomMenu {
             const stats = equipment.rolledStats
                 .map((modifier) => this.formatStatModifier(modifier))
                 .join(", ");
+            const comparison = this.equipmentComparisonService.compare(
+                this.player,
+                this.equipmentManager,
+                equipment,
+            );
+            const comparisonSummary = this.formatEquipmentComparisonSummary(comparison);
             const button = this.createMenuActionButton(
                 `${equipment.definition.name} #${shortId}${equippedLabel} ` +
-                `[${equipment.rolledStats.length}/${CURRENT_MAX_STAT_LINE_COUNT}]\n${stats}`,
+                `[${equipment.rolledStats.length}/${CURRENT_MAX_STAT_LINE_COUNT}]\n` +
+                `${stats}\n${comparisonSummary}`,
                 110,
-                32,
+                44,
                 () => {
                     this.attemptEquip(equipment);
                 },
@@ -1438,13 +1450,13 @@ export class BottomMenu {
 
             button.position.set(
                 650 + column * 195,
-                28 + row * 64,
+                28 + row * 76,
             );
             this.tabContainer.addChild(button);
             this.renderStatUnlockAction(
                 equipment,
                 765 + column * 195,
-                28 + row * 64,
+                28 + row * 76,
             );
             const rerollButton = this.createMenuActionButton(
                 "TẨY",
@@ -1457,7 +1469,7 @@ export class BottomMenu {
 
             rerollButton.position.set(
                 765 + column * 195,
-                54 + row * 64,
+                54 + row * 76,
             );
             this.tabContainer.addChild(rerollButton);
         });
@@ -1495,6 +1507,23 @@ export class BottomMenu {
         title.x = 650;
         closeButton.position.set(1195, 0);
         this.tabContainer.addChild(title, closeButton);
+
+        const comparison = this.equipmentComparisonService.compare(
+            this.player,
+            this.equipmentManager,
+            equipment,
+        );
+        const affixPoolText = this.createContentText(
+            `Pool: ${comparison.affixPool.map((stat) => STAT_LABELS[stat]).join(" / ")} | ` +
+            `Roll: ${Math.round(comparison.averageRollQuality * 100)}% | ` +
+            this.formatEquipmentComparisonSummary(comparison),
+            20,
+            9,
+        );
+
+        affixPoolText.x = 650;
+        affixPoolText.style.fill = this.getEquipmentComparisonColor(comparison);
+        this.tabContainer.addChild(affixPoolText);
 
         equipment.rolledStats.forEach((modifier, index) => {
             const locked = equipment.lockedStatIndices.includes(index);
@@ -1709,9 +1738,16 @@ export class BottomMenu {
     }
 
     private attemptEquip(equipment: EquipmentInstance): void {
+        const comparison = this.equipmentComparisonService.compare(
+            this.player,
+            this.equipmentManager,
+            equipment,
+        );
+
         if (this.equipmentManager.equip(equipment)) {
             this.equipmentStatusMessage =
-                `Đã trang bị ${equipment.definition.name}`;
+                `Đã trang bị ${equipment.definition.name} | ` +
+                this.formatEquipmentComparisonSummary(comparison);
         } else {
             this.equipmentStatusMessage =
                 `Yêu cầu cảnh giới: ${CULTIVATION_REALM_LABELS[equipment.definition.requiredRealm]}`;
@@ -1881,6 +1917,53 @@ export class BottomMenu {
                 : "";
 
         return `${STAT_LABELS[modifier.stat]} +${value}${suffix}`;
+    }
+
+    private formatEquipmentComparisonSummary(
+        comparison: EquipmentComparison,
+    ): string {
+        const gradeLabel: Readonly<Record<EquipmentComparison["grade"], string>> = {
+            upgrade: "NÂNG CẤP",
+            sidegrade: "ĐỔI BUILD",
+            downgrade: "GIẢM SỨC MẠNH",
+            equipped: "ĐANG DÙNG",
+        };
+        const dpsDelta = comparison.dpsDeltaPercent * 100;
+        const dpsText = comparison.grade === "equipped"
+            ? `DPS ${this.formatNumber(comparison.projectedEstimatedDps)}`
+            : `DPS ${dpsDelta >= 0 ? "+" : ""}${dpsDelta.toFixed(1)}%`;
+        const importantDeltas = comparison.statDeltas
+            .filter((entry) => Math.abs(entry.delta) > 0.000001)
+            .sort((left, right) => Math.abs(right.delta) - Math.abs(left.delta))
+            .slice(0, 2)
+            .map((entry) => {
+                const percent = RATIO_STATS.has(entry.stat);
+                const value = percent
+                    ? `${entry.delta >= 0 ? "+" : ""}${(entry.delta * 100).toFixed(1)}%`
+                    : `${entry.delta >= 0 ? "+" : ""}${this.formatNumber(entry.delta)}`;
+                return `${STAT_LABELS[entry.stat]} ${value}`;
+            })
+            .join(" | ");
+        const tags = comparison.buildTags.length > 0
+            ? comparison.buildTags.join("/")
+            : "Thuần stat";
+
+        return `${gradeLabel[comparison.grade]} | ${dpsText}` +
+            `${importantDeltas ? ` | ${importantDeltas}` : ""}` +
+            ` | ${tags} | Roll ${Math.round(comparison.averageRollQuality * 100)}%`;
+    }
+
+    private getEquipmentComparisonColor(comparison: EquipmentComparison): string {
+        if (comparison.grade === "upgrade") {
+            return "#86efac";
+        }
+        if (comparison.grade === "downgrade") {
+            return "#fca5a5";
+        }
+        if (comparison.grade === "sidegrade") {
+            return "#fde68a";
+        }
+        return "#93c5fd";
     }
 
     private renderTechniqueTab(): void {
@@ -2349,6 +2432,11 @@ export class BottomMenu {
         y: number,
     ): void {
         const equipped = this.equipmentManager.isEquipped(equipment.instanceId);
+        const comparison = this.equipmentComparisonService.compare(
+            this.player,
+            this.equipmentManager,
+            equipment,
+        );
 
         if (this.pendingStatUnlockInstanceId === equipment.instanceId) {
             this.renderStatUnlockAction(equipment, x, y + 42);
@@ -2420,7 +2508,8 @@ export class BottomMenu {
             () => {
                 if (this.equipmentManager.equip(equipment)) {
                     this.inventoryStatusMessage =
-                        `Đã trang bị ${equipment.definition.name}`;
+                        `Đã trang bị ${equipment.definition.name} | ` +
+                        this.formatEquipmentComparisonSummary(comparison);
                 } else {
                     this.inventoryStatusMessage =
                         `Yêu cầu cảnh giới: ` +
@@ -2450,6 +2539,7 @@ export class BottomMenu {
     private beginEquipmentSalvage(instanceId: string): void {
         const check = this.equipmentSalvageManager.canSalvage(instanceId);
         const preview = this.equipmentSalvageManager.getSalvagePreview(instanceId);
+        const equipment = this.inventory.getEquipmentInstance(instanceId);
 
         if (!check.success || !preview) {
             this.inventoryStatusMessage = this.getSalvageFailureMessage(
@@ -2462,10 +2552,20 @@ export class BottomMenu {
 
         this.pendingSalvageInstanceId = instanceId;
         this.pendingStatUnlockInstanceId = null;
+        const comparison = equipment
+            ? this.equipmentComparisonService.compare(
+                this.player,
+                this.equipmentManager,
+                equipment,
+            )
+            : null;
         this.inventoryStatusMessage =
             `Tháo rã ${preview.equipmentName} ` +
             `[${EQUIPMENT_RARITY_LABELS[preview.rarity]}]? ` +
-            `Nhận ${preview.essenceName} x${preview.essenceQuantity}`;
+            `Nhận ${preview.essenceName} x${preview.essenceQuantity}` +
+            (comparison
+                ? ` | ${this.formatEquipmentComparisonSummary(comparison)}`
+                : "");
         this.renderInventoryTab();
     }
 
