@@ -11,6 +11,7 @@ export const BOSS_DATA = {
     GREEN_WIND_WOLF_KING: {
         enemy: ENEMY_DATA.GREEN_WIND_WOLF_KING,
         minimumSkillGap: 1,
+        clearSpiritStoneBonus: 100,
         phases: [
             {
                 id: "phase_1",
@@ -55,6 +56,7 @@ export const BOSS_DATA = {
                 cooldown: 6,
                 initialCooldown: 3,
                 damageMultiplier: 1.8,
+                telegraphDuration: 0.82,
                 enabledFromPhase: "phase_1",
                 priority: 50,
             },
@@ -68,6 +70,8 @@ export const BOSS_DATA = {
                 priority: 80,
                 buffAttackMultiplier: 1.2,
                 buffDuration: 5,
+                damageMultiplier: 0.7,
+                telegraphDuration: 1.05,
             },
         ],
     },

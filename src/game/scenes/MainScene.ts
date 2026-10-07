@@ -27,6 +27,7 @@ import { CultivationSystem } from "../cultivation/CultivationSystem";
 import { BreakthroughRewardSystem } from "../cultivation/BreakthroughRewardSystem";
 import { BuffManager } from "../buffs/BuffManager";
 import { BossController } from "../bosses/BossController";
+import { BossSkillVfxSystem } from "../bosses/BossSkillVfxSystem";
 import type { BossSummonConfig } from "../bosses/BossPhase";
 import type { BossSkillDefinition } from "../bosses/BossSkill";
 import { getBossForChapter } from "../bosses/bossData";
@@ -85,6 +86,7 @@ export class MainScene {
     private enemies: Enemy[];
     private enemyFactory: EnemyFactory;
     private bossController: BossController | null;
+    private bossSkillVfxSystem: BossSkillVfxSystem;
     private currentEncounter: EncounterDefinition | null;
     private currentWaveIndex: number;
 
@@ -134,6 +136,7 @@ export class MainScene {
         this.enemies = [];
         this.enemyFactory = new EnemyFactory();
         this.bossController = null;
+        this.bossSkillVfxSystem = new BossSkillVfxSystem(this.container);
         this.currentEncounter = null;
         this.currentWaveIndex = 0;
 
@@ -186,6 +189,7 @@ export class MainScene {
             PlayerBottomHUD.loadAssets(),
             SkillVfxSystem.loadAssets(),
             loadEnemyAssets(),
+            BossSkillVfxSystem.loadAssets(),
         ]);
         this.createUI();
         this.createCultivationSystem();
@@ -208,11 +212,32 @@ export class MainScene {
             this.breakthroughRewardSystem?.reconcile(true);
         }
 
+        this.applyBossTestMode();
+
         this.startStage();
         this.createBottomMenu();
         this.createPlayerHUD();
         this.setupSkillInput();
         this.startGameLoop();
+    }
+
+    private applyBossTestMode(): void {
+        if (
+            !import.meta.env.DEV ||
+            !new URLSearchParams(window.location.search).has("bossTest")
+        ) {
+            return;
+        }
+
+        this.stageSystem.restoreProgress(1, 50);
+        this.player?.restoreFullResources();
+        this.skillManager?.resetCooldowns();
+        this.spiritStone = Math.max(this.spiritStone, 1000);
+    }
+
+    private isBossTestMode(): boolean {
+        return import.meta.env.DEV &&
+            new URLSearchParams(window.location.search).has("bossTest");
     }
 
     private createPlayerHUD(): void {
@@ -713,11 +738,26 @@ export class MainScene {
     }
 
     private createUI(): void {
+        this.stageText = new Text({
+            text: "",
+            style: {
+                fill: "#fde68a",
+                fontSize: 14,
+                fontWeight: "bold",
+                align: "center",
+                lineHeight: 18,
+            },
+        });
+        this.stageText.anchor.set(0.5, 0);
+        this.stageText.x = this.app.screen.width / 2;
+        this.stageText.y = 7;
+        this.container.addChild(this.stageText);
+
         this.statusText = new Text({
             text: "",
             style: {
                 fill: "#ffffff",
-                fontSize: 24,
+                fontSize: 18,
                 fontWeight: "bold",
             },
         });
@@ -729,7 +769,7 @@ export class MainScene {
         this.statusText.x =
             this.app.screen.width / 2;
 
-        this.statusText.y = 35;
+        this.statusText.y = 52;
 
         this.container.addChild(
             this.statusText,
@@ -790,7 +830,23 @@ export class MainScene {
     ): void {
         if (config.isBossStage) {
             const bossDefinition = getBossForChapter(config.chapter);
-            const boss = this.enemyFactory.create(bossDefinition.enemy, config);
+            const bossConfig = this.isBossTestMode() && this.player
+                ? {
+                    ...config,
+                    enemyHp: Math.max(
+                        config.enemyHp * 8,
+                        this.player.getAttack() * 140,
+                    ),
+                    enemyAttack: Math.max(18, config.enemyAttack * 0.75),
+                }
+                : config;
+            const boss = this.enemyFactory.create(
+                bossDefinition.enemy,
+                bossConfig,
+                this.isBossTestMode()
+                    ? { phaseHpFloors: [0.7, 0.35, 0] }
+                    : {},
+            );
 
             boss.setPosition(
                 1050,
@@ -817,15 +873,41 @@ export class MainScene {
                     dealDamageToPlayer: (damage) => {
                         this.dealBossSkillDamage(damage);
                     },
-                    onSkillCast: (skill) => {
+                    onSkillTelegraph: (skill) => {
                         this.showBossSkillText(boss, skill);
+                        this.bossSkillVfxSystem.playTelegraph(
+                            skill.id,
+                            boss.getView().x,
+                            boss.getView().y,
+                            this.player?.getView().x ?? 150,
+                            this.player?.getView().y ?? MainScene.COMBAT_BASELINE_Y,
+                            skill.telegraphDuration ?? 0.65,
+                        );
+                    },
+                    onSkillImpact: (skill) => {
+                        this.bossSkillVfxSystem.playImpact(
+                            skill.id,
+                            boss.getView().x,
+                            boss.getView().y,
+                            this.player?.getView().x ?? 150,
+                            this.player?.getView().y ?? MainScene.COMBAT_BASELINE_Y,
+                        );
                     },
                     onPhaseChanged: (_phase, phaseIndex) => {
                         boss.setBossPhaseVisual(phaseIndex);
                         this.showBossPhaseText(boss, phaseIndex);
+                        this.bossSkillVfxSystem.playPhaseTransition(
+                            boss.getView().x,
+                            boss.getView().y,
+                            phaseIndex,
+                        );
                     },
                     onSummonRequested: (summon) => {
-                        this.spawnBossMinions(summon, config, boss);
+                        this.bossSkillVfxSystem.playSummon(
+                            boss.getView().x,
+                            boss.getView().y,
+                            () => this.spawnBossMinions(summon, config, boss),
+                        );
                     },
                 },
             );
@@ -954,6 +1036,18 @@ export class MainScene {
             `Lang Vương nổi giận! Giai đoạn ${phaseIndex + 1}`,
             "#fbbf24",
         );
+
+        if (this.statusText) {
+            const phaseLabel = phaseIndex === 1
+                ? "PHASE 2 · LANG VƯƠNG HỐNG"
+                : "PHASE 3 · TRIỆU HỒI LANG HỒN";
+            this.statusText.text = phaseLabel;
+            gsap.delayedCall(1.15, () => {
+                if (this.statusText?.text === phaseLabel) {
+                    this.statusText.text = "";
+                }
+            });
+        }
     }
 
     private updateBossUI(): void {
@@ -1298,6 +1392,24 @@ export class MainScene {
 
         this.spiritStone += loot.spiritStone;
 
+        if (
+            enemyDefinition.isBoss &&
+            this.stageSystem.getChapter() === 1 &&
+            this.stageSystem.getStage() === 50
+        ) {
+            const clearBonus = getBossForChapter(1).clearSpiritStoneBonus ?? 0;
+            if (clearBonus > 0) {
+                this.spiritStone += clearBonus;
+                this.addRecentLoot(`+${clearBonus} Linh Thạch · Thưởng diệt Lang Vương`);
+                this.showDamageText(
+                    enemy.getView().x,
+                    enemy.getView().y - 150,
+                    `CHIẾN LỢI LANG VƯƠNG · +${clearBonus} LINH THẠCH`,
+                    "#fde68a",
+                );
+            }
+        }
+
         if (this.spiritStoneText) {
             this.spiritStoneText.text = `Linh Thạch: ${this.spiritStone}`;
         }
@@ -1501,17 +1613,29 @@ export class MainScene {
             return;
         }
 
-        if (
-            config.isBossStage
-        ) {
-            this.stageText.text =
-                `Chương ${config.chapter} - Ải ${config.stage} - BOSS`;
-        } else {
-            const encounter = this.currentEncounter ??
-                getEncounterDefinition(config.chapter, config.stage);
-            this.stageText.text =
-                `Chương ${config.chapter} - Ải ${config.stage} · ${encounter.label}`;
-        }
+        const encounter = this.currentEncounter ??
+            getEncounterDefinition(config.chapter, config.stage);
+        const kindLabel = this.getEncounterKindLabel(encounter.kind);
+        this.stageText.text =
+            `Chương ${config.chapter} · Ải ${config.stage} · ${kindLabel}\n` +
+            `${encounter.label} — ${encounter.subtitle}`;
+
+        gsap.killTweensOf(this.stageText);
+        this.stageText.alpha = 0;
+        this.stageText.y = 2;
+        gsap.to(this.stageText, {
+            alpha: 1,
+            y: 7,
+            duration: 0.25,
+            ease: "power2.out",
+        });
+    }
+
+    private getEncounterKindLabel(kind: EncounterDefinition["kind"]): string {
+        if (kind === "elite") return "TINH ANH";
+        if (kind === "gauntlet") return "LIÊN CHIẾN";
+        if (kind === "boss") return "BOSS";
+        return "THƯỜNG";
     }
 
     private showDamageText(

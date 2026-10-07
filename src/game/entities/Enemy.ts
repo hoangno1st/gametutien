@@ -24,6 +24,7 @@ export interface RuntimeEnemyStats {
 
 export interface EnemyRuntimeOptions {
     rewardEnabled?: boolean;
+    phaseHpFloors?: ReadonlyArray<number>;
 }
 
 export interface EnemyPhaseMultipliers {
@@ -46,6 +47,7 @@ export class Enemy {
     private attackTimer = 0;
     private enraged = false;
     private rewardEnabled: boolean;
+    private phaseHpFloors: ReadonlyArray<number>;
     private phaseAttackMultiplier = 1;
     private phaseMoveSpeedMultiplier = 1;
     private phaseAttackSpeedMultiplier = 1;
@@ -68,6 +70,7 @@ export class Enemy {
         this.baseRuntimeAttackInterval = stats.attackInterval;
         this.attackRange = stats.attackRange;
         this.rewardEnabled = options.rewardEnabled ?? true;
+        this.phaseHpFloors = options.phaseHpFloors ?? [];
 
         const config = getEnemyVisualConfig(definition.id);
         this.body = new AnimatedSprite(getEnemyAnimationTextures(definition.id, "idle"));
@@ -207,7 +210,11 @@ export class Enemy {
     }
 
     public takeDamage(damage: number): void {
-        this.hp = Math.max(0, this.hp - damage);
+        const floorRatio = this.phaseHpFloors[this.phaseIndex];
+        const floorHp = floorRatio === undefined
+            ? 0
+            : this.maxHp * Math.max(0, Math.min(1, floorRatio));
+        this.hp = Math.max(floorHp, this.hp - damage);
         this.worldHud?.setHP(this.hp, this.maxHp);
 
         if (this.isDead()) {
@@ -222,6 +229,10 @@ export class Enemy {
     public isDead(): boolean { return this.hp <= 0; }
     public isRemovalReady(): boolean { return !this.isDead() || this.deathAnimationComplete; }
     public getView(): Container { return this.container; }
+
+    public releasePhaseHpFloor(nextPhaseIndex: number): void {
+        this.phaseIndex = Math.max(0, Math.floor(nextPhaseIndex));
+    }
 
     private playAnimation(state: EnemyAnimationState, loop: boolean, force = false): void {
         if (!force && this.animationState === state) return;

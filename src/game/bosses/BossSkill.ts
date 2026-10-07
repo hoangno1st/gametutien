@@ -15,6 +15,7 @@ export interface BossSkillDefinition {
     priority?: number;
     buffAttackMultiplier?: number;
     buffDuration?: number;
+    telegraphDuration?: number;
 }
 
 export interface BossSkillState {

@@ -104,28 +104,19 @@ export class StageSystem {
                 stageDifficulty / 10,
             );
 
-        const enemyHp =
-            30 +
-            stageDifficulty * 4 +
-            chapterDifficulty * 50;
+        const chapterOneCurve = this.getChapterOneDifficulty(stage);
+        const enemyHp = chapter === 1
+            ? chapterOneCurve.hp
+            : 30 + stageDifficulty * 4 + chapterDifficulty * 50;
 
-        const enemyAttack =
-            4 +
-            Math.floor(
-                stageDifficulty * 0.4,
-            ) +
-            chapterDifficulty * 5;
+        const enemyAttack = chapter === 1
+            ? chapterOneCurve.attack
+            : 4 + Math.floor(stageDifficulty * 0.4) + chapterDifficulty * 5;
 
-        const enemySpeed =
-            1.5 +
-            Math.min(
-                stageDifficulty * 0.01,
-                0.5,
-            ) +
-            Math.min(
-                chapterDifficulty * 0.05,
-                0.5,
-            );
+        const enemySpeed = chapter === 1
+            ? chapterOneCurve.speed
+            : 1.5 + Math.min(stageDifficulty * 0.01, 0.5) +
+                Math.min(chapterDifficulty * 0.05, 0.5);
 
         return {
             chapter,
@@ -138,6 +129,52 @@ export class StageSystem {
             enemySpeed,
 
             isBossStage: false,
+        };
+    }
+
+    private getChapterOneDifficulty(stage: number): {
+        hp: number;
+        attack: number;
+        speed: number;
+    } {
+        const clampedStage = Math.max(1, Math.min(49, stage));
+
+        if (clampedStage <= 9) {
+            return {
+                hp: 30 + (clampedStage - 1) * 2.5,
+                attack: 4 + (clampedStage - 1) * 0.22,
+                speed: 1.5 + (clampedStage - 1) * 0.006,
+            };
+        }
+
+        if (clampedStage <= 19) {
+            return {
+                hp: 52 + (clampedStage - 10) * 3.3,
+                attack: 6 + (clampedStage - 10) * 0.28,
+                speed: 1.56 + (clampedStage - 10) * 0.007,
+            };
+        }
+
+        if (clampedStage <= 29) {
+            return {
+                hp: 84 + (clampedStage - 20) * 4.1,
+                attack: 8.5 + (clampedStage - 20) * 0.34,
+                speed: 1.63 + (clampedStage - 20) * 0.008,
+            };
+        }
+
+        if (clampedStage <= 39) {
+            return {
+                hp: 122 + (clampedStage - 30) * 4.8,
+                attack: 11.5 + (clampedStage - 30) * 0.4,
+                speed: 1.71 + (clampedStage - 30) * 0.008,
+            };
+        }
+
+        return {
+            hp: 168 + (clampedStage - 40) * 5.6,
+            attack: 15.2 + (clampedStage - 40) * 0.46,
+            speed: 1.79 + (clampedStage - 40) * 0.009,
         };
     }
 }

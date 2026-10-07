@@ -7,4 +7,5 @@ export interface BossDefinition {
     phases: ReadonlyArray<BossPhaseDefinition>;
     skills: ReadonlyArray<BossSkillDefinition>;
     minimumSkillGap: number;
+    clearSpiritStoneBonus?: number;
 }
