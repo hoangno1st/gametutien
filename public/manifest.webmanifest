@@ -1,0 +1,13 @@
+{
+  "name": "Tiên Lộ Idle",
+  "short_name": "Tiên Lộ",
+  "description": "Game tu tiên idle chạy local-first trên trình duyệt.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#101419",
+  "theme_color": "#182028",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

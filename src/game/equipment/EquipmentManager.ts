@@ -6,6 +6,7 @@ import type { Player } from "../entities/Player";
 import type { Inventory } from "../inventory/Inventory";
 import type { EquipmentInstance } from "./EquipmentInstance";
 import type { EquipmentSlot } from "./EquipmentSlot";
+import { getEffectiveEquipmentStatValue } from "./equipmentEnhancementConfig";
 
 export class EquipmentManager {
     private player: Player;
@@ -131,6 +132,10 @@ export class EquipmentManager {
         equipment.rolledStats.forEach((modifier, index) => {
             this.player.getStatSystem().addModifier({
                 ...modifier,
+                value: getEffectiveEquipmentStatValue(
+                    modifier.value,
+                    equipment.enhancementLevel,
+                ),
                 id: this.getAppliedModifierId(equipment, index),
                 source: `equipment:${equipment.instanceId}`,
             });

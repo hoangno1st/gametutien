@@ -122,6 +122,14 @@ export class CultivationSystem {
         }
     }
 
+    public addCultivation(amount: number): number {
+        if (!Number.isFinite(amount) || amount <= 0 || this.isMaxCultivation()) return 0;
+        const previous = this.cultivation;
+        this.cultivation = Math.min(this.requiredCultivation, this.cultivation + amount);
+        if (this.cultivation !== previous) this.version += 1;
+        return this.cultivation - previous;
+    }
+
     public isMaxCultivation(): boolean {
         return (
             this.currentRealm ===

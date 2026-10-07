@@ -64,4 +64,13 @@ export class CatalystDropSystem {
 
         return null;
     }
+
+    public rollEliteDrop(): CatalystDrop | null {
+        if (this.random() >= 0.12) return null;
+        const lowGrade = [...this.definitions.values()].filter(
+            (definition) => definition.rarityLuckBonus === 10,
+        );
+        const catalyst = lowGrade[Math.floor(this.random() * lowGrade.length)];
+        return catalyst ? { catalyst, amount: 1 } : null;
+    }
 }

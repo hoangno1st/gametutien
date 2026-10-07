@@ -36,6 +36,7 @@ import { EnemyFactory } from "../enemies/EnemyFactory";
 import type { EquipmentDefinition } from "../equipment/Equipment";
 import { EquipmentFactory } from "../equipment/EquipmentFactory";
 import { EquipmentManager } from "../equipment/EquipmentManager";
+import { EquipmentEnhancementManager } from "../equipment/EquipmentEnhancementManager";
 import { EquipmentSalvageManager } from "../equipment/EquipmentSalvageManager";
 import { EquipmentStatUnlockManager } from "../equipment/EquipmentStatUnlockManager";
 import { EquipmentRerollManager } from "../equipment/EquipmentRerollManager";
@@ -61,6 +62,29 @@ import type { StageConfig } from "../systems/StageSystem";
 import { TechniqueManager } from "../techniques/TechniqueManager";
 import { TECHNIQUE_DATA } from "../techniques/techniqueData";
 import { BottomMenu } from "../ui/BottomMenu";
+import { getChapterDefinition } from "../chapters/chapterData";
+import { GameEventBus, GameEventType } from "../events/GameEvent";
+import { QuestManager } from "../quests/QuestManager";
+import { QUEST_DEFINITIONS } from "../quests/questData";
+import { AchievementManager } from "../achievements/AchievementManager";
+import { DailyTaskManager } from "../daily/DailyTaskManager";
+import { ProgressBar } from "../ui/components/ProgressBar";
+import { GameTheme } from "../ui/theme/GameTheme";
+import { AudioManager } from "../audio/AudioManager";
+import { CombatVfxSystem } from "../vfx/CombatVfxSystem";
+import { TutorialManager } from "../tutorial/TutorialManager";
+import { formatGameNumber } from "../utils/NumberFormatter";
+import { VisualSettingsManager } from "../settings/VisualSettings";
+import { ChapterBackgroundSystem } from "../backgrounds/ChapterBackgroundSystem";
+import { gameAssetManager } from "../assets/AssetManager";
+import { ELITE_SPAWN_CHANCE, rollEliteAffix } from "../enemies/EliteEnemy";
+import { RareStageEventSystem } from "../events/RareStageEventSystem";
+import { NotificationManager, NotificationType } from "../ui/notifications/NotificationManager";
+import {
+    GameAnalyticsEventBridge,
+    NoopGameAnalytics,
+} from "../analytics/GameAnalytics";
+import type { GameAnalytics } from "../analytics/GameAnalytics";
 
 export class MainScene {
     private app: Application;
@@ -78,6 +102,7 @@ export class MainScene {
     private alchemyManager: AlchemyManager | null;
     private inventory: Inventory;
     private equipmentManager: EquipmentManager | null;
+    private equipmentEnhancementManager: EquipmentEnhancementManager | null;
     private equipmentSalvageManager: EquipmentSalvageManager | null;
     private equipmentStatUnlockManager: EquipmentStatUnlockManager | null;
     private equipmentRerollManager: EquipmentRerollManager | null;
@@ -91,6 +116,19 @@ export class MainScene {
     private skillCombatSystem: SkillCombatSystem | null;
     private bottomMenu: BottomMenu | null;
     private saveManager: SaveManager | null;
+    private eventBus: GameEventBus;
+    private questManager: QuestManager | null;
+    private achievementManager: AchievementManager | null;
+    private dailyTaskManager: DailyTaskManager | null;
+    private audioManager: AudioManager;
+    private combatVfx: CombatVfxSystem;
+    private tutorialManager: TutorialManager | null;
+    private visualSettingsManager: VisualSettingsManager;
+    private backgroundSystem: ChapterBackgroundSystem;
+    private rareStageEventSystem: RareStageEventSystem | null;
+    private notificationManager: NotificationManager;
+    private analytics: GameAnalytics;
+    private analyticsBridge: GameAnalyticsEventBridge;
 
     private heroAttackTimer: number;
 
@@ -104,6 +142,9 @@ export class MainScene {
     private bossUi: Container | null;
     private bossHpBarFill: Graphics | null;
     private bossStatusText: Text | null;
+    private hpBar: ProgressBar | null;
+    private mpBar: ProgressBar | null;
+    private cultivationBar: ProgressBar | null;
 
     private stageCleared: boolean;
     private gameOver: boolean;
@@ -124,6 +165,7 @@ export class MainScene {
         this.alchemyManager = null;
         this.inventory = new Inventory();
         this.equipmentManager = null;
+        this.equipmentEnhancementManager = null;
         this.equipmentSalvageManager = null;
         this.equipmentStatUnlockManager = null;
         this.equipmentRerollManager = null;
@@ -137,6 +179,23 @@ export class MainScene {
         this.skillCombatSystem = null;
         this.bottomMenu = null;
         this.saveManager = null;
+        this.eventBus = new GameEventBus();
+        this.questManager = null;
+        this.achievementManager = null;
+        this.dailyTaskManager = null;
+        this.audioManager = new AudioManager();
+        this.visualSettingsManager = new VisualSettingsManager();
+        this.combatVfx = new CombatVfxSystem(this.container, this.visualSettingsManager);
+        this.tutorialManager = null;
+        this.backgroundSystem = new ChapterBackgroundSystem(
+            gameAssetManager,
+            this.app.screen.width,
+            this.app.screen.height,
+        );
+        this.rareStageEventSystem = null;
+        this.notificationManager = new NotificationManager();
+        this.analytics = new NoopGameAnalytics();
+        this.analyticsBridge = new GameAnalyticsEventBridge(this.eventBus, this.analytics);
 
         this.heroAttackTimer = 0;
 
@@ -150,22 +209,30 @@ export class MainScene {
         this.bossUi = null;
         this.bossHpBarFill = null;
         this.bossStatusText = null;
+        this.hpBar = null;
+        this.mpBar = null;
+        this.cultivationBar = null;
 
         this.stageCleared = false;
         this.gameOver = false;
     }
 
     public async init(): Promise<void> {
+        void this.analyticsBridge;
+        this.analytics.track("game_start");
         this.app.stage.addChild(
             this.container,
         );
+        this.container.addChild(this.backgroundSystem.getView());
 
         this.createUI();
         await this.createPlayer();
         this.createCultivationSystem();
+        this.createRareStageEventSystem();
         this.createCraftingManager();
         this.createBuffAndAlchemySystems();
         this.createEquipmentManager();
+        this.createEquipmentEnhancementManager();
         this.createEquipmentSalvageManager();
         this.createEquipmentStatUnlockManager();
         this.createEquipmentRerollManager();
@@ -173,7 +240,10 @@ export class MainScene {
         this.createArtifactSystems();
         this.createTechniqueManager();
         this.createSkillSystems();
-        this.setupDebugInventory();
+        this.createProgressionObjectives();
+        if (import.meta.env.DEV) {
+            this.setupDebugInventory();
+        }
         this.createSaveManager();
 
         if (this.saveManager?.hasSave()) {
@@ -182,6 +252,7 @@ export class MainScene {
 
         this.startStage();
         this.createBottomMenu();
+        this.app.stage.addChild(this.notificationManager.getView());
         this.startGameLoop();
     }
 
@@ -189,11 +260,20 @@ export class MainScene {
         return this.craftingManager;
     }
 
+    public blockSavingForFatalError(): void {
+        this.saveManager?.blockAutomaticSave();
+    }
+
+    public exportSaveJson(): string | null {
+        return this.saveManager?.exportSaveJson() ?? null;
+    }
+
     private createBottomMenu(): void {
         if (
             !this.player ||
             !this.cultivationSystem ||
             !this.equipmentManager ||
+            !this.equipmentEnhancementManager ||
             !this.equipmentSalvageManager ||
             !this.equipmentStatUnlockManager ||
             !this.equipmentRerollManager ||
@@ -206,6 +286,10 @@ export class MainScene {
             !this.buffManager ||
             !this.alchemyManager ||
             !this.saveManager
+            || !this.questManager
+            || !this.achievementManager
+            || !this.dailyTaskManager
+            || !this.tutorialManager
         ) {
             return;
         }
@@ -217,6 +301,7 @@ export class MainScene {
             this.cultivationSystem,
             this.inventory,
             this.equipmentManager,
+            this.equipmentEnhancementManager,
             this.equipmentSalvageManager,
             this.equipmentStatUnlockManager,
             this.equipmentRerollManager,
@@ -230,6 +315,14 @@ export class MainScene {
             this.buffManager,
             () => this.spiritStone,
             this.saveManager,
+            this.eventBus,
+            this.questManager,
+            this.achievementManager,
+            this.dailyTaskManager,
+            this.audioManager,
+            this.tutorialManager,
+            this.visualSettingsManager,
+            this.notificationManager,
             () => this.restartAfterPersistentChange(),
         );
         this.app.stage.addChild(
@@ -248,6 +341,17 @@ export class MainScene {
             () => this.cultivationSystem?.getRealm() ??
                 CultivationRealm.QI_REFINING,
         );
+    }
+
+    private createEquipmentEnhancementManager(): void {
+        if (!this.equipmentManager) return;
+        this.equipmentEnhancementManager = new EquipmentEnhancementManager({
+            inventory: this.inventory,
+            equipmentManager: this.equipmentManager,
+            getSpiritStone: () => this.spiritStone,
+            spendSpiritStone: (amount) => this.spendSpiritStone(amount),
+            refundSpiritStone: (amount) => this.setSpiritStone(this.spiritStone + amount),
+        });
     }
 
     private createEquipmentSalvageManager(): void {
@@ -316,6 +420,15 @@ export class MainScene {
         this.cultivationSystem = new CultivationSystem(
             () => this.player?.getCultivationSpeed() ?? 1,
         );
+    }
+
+    private createRareStageEventSystem(): void {
+        if (!this.cultivationSystem) return;
+        this.rareStageEventSystem = new RareStageEventSystem({
+            inventory: this.inventory,
+            cultivationSystem: this.cultivationSystem,
+            addSpiritStone: (amount) => this.setSpiritStone(this.spiritStone + amount),
+        });
     }
 
     private createCraftingManager(): void {
@@ -402,6 +515,11 @@ export class MainScene {
             () => {
                 this.player?.syncCurrentResourcesWithMaxStats();
             },
+            {
+                inventory: this.inventory,
+                getSpiritStone: () => this.spiritStone,
+                spendSpiritStone: (amount) => this.spendSpiritStone(amount),
+            },
         );
     }
 
@@ -422,6 +540,11 @@ export class MainScene {
                 onDamage: (event) => this.showSkillDamage(event),
                 onHeal: (amount) => this.showSkillHeal(amount),
             },
+            () => this.bossController
+                ? this.artifactManager?.getBossDamageMultiplier() ?? 1
+                : 1,
+            (skillId, baseMultiplier) => this.techniqueManager
+                ?.getSkillDamageMultiplier(skillId, baseMultiplier) ?? baseMultiplier,
         );
     }
 
@@ -434,6 +557,10 @@ export class MainScene {
             !this.cultivationSystem ||
             !this.skillManager ||
             !this.buffManager
+            || !this.questManager
+            || !this.achievementManager
+            || !this.dailyTaskManager
+            || !this.tutorialManager
         ) {
             return;
         }
@@ -450,7 +577,27 @@ export class MainScene {
             player: this.player,
             getSpiritStone: () => this.spiritStone,
             setSpiritStone: (amount) => this.setSpiritStone(amount),
+            questManager: this.questManager,
+            achievementManager: this.achievementManager,
+            dailyTaskManager: this.dailyTaskManager,
+            audioManager: this.audioManager,
+            tutorialManager: this.tutorialManager,
+            visualSettingsManager: this.visualSettingsManager,
         });
+    }
+
+    private createProgressionObjectives(): void {
+        const addSpiritStone = (amount: number) =>
+            this.setSpiritStone(this.spiritStone + Math.max(0, Math.floor(amount)));
+        this.questManager = new QuestManager(QUEST_DEFINITIONS, {
+            eventBus: this.eventBus,
+            inventory: this.inventory,
+            itemDefinitions: [...MATERIAL_DEFINITIONS, ...CATALYST_DEFINITIONS],
+            addSpiritStone,
+        });
+        this.achievementManager = new AchievementManager(this.eventBus);
+        this.dailyTaskManager = new DailyTaskManager(this.eventBus, addSpiritStone);
+        this.tutorialManager = new TutorialManager(this.eventBus);
     }
 
     private setSpiritStone(amount: number): void {
@@ -521,7 +668,8 @@ export class MainScene {
             },
         });
 
-        this.stageText.x = 20;
+        this.stageText.anchor.set(0.5, 0);
+        this.stageText.x = this.app.screen.width / 2;
         this.stageText.y = 20;
 
         this.container.addChild(
@@ -538,8 +686,9 @@ export class MainScene {
                 },
             });
 
-        this.spiritStoneText.x = 20;
-        this.spiritStoneText.y = 50;
+        this.spiritStoneText.anchor.set(1, 0);
+        this.spiritStoneText.x = this.app.screen.width - 20;
+        this.spiritStoneText.y = 20;
 
         this.container.addChild(
             this.spiritStoneText,
@@ -575,8 +724,16 @@ export class MainScene {
             },
         });
         this.recentLootText.x = 20;
-        this.recentLootText.y = 78;
+        this.recentLootText.y = 76;
         this.container.addChild(this.recentLootText);
+
+        this.hpBar = new ProgressBar(230, 16, GameTheme.colors.hp);
+        this.mpBar = new ProgressBar(230, 16, GameTheme.colors.mp);
+        this.cultivationBar = new ProgressBar(300, 16, GameTheme.colors.jade);
+        this.hpBar.position.set(20, 20);
+        this.mpBar.position.set(20, 42);
+        this.cultivationBar.position.set(this.app.screen.width - 320, 46);
+        this.container.addChild(this.hpBar, this.mpBar, this.cultivationBar);
 
         this.createBossUI();
     }
@@ -635,6 +792,11 @@ export class MainScene {
         const config =
             this.stageSystem.getConfig();
 
+        void this.backgroundSystem.changeChapter(
+            getChapterDefinition(config.chapter),
+            this.visualSettingsManager.getSettings().reduceMotion,
+        );
+
         this.updateStageUI(
             config,
         );
@@ -642,6 +804,7 @@ export class MainScene {
         this.spawnStageEnemies(
             config,
         );
+        this.audioManager.playMusic(config.isBossStage);
     }
 
     private spawnStageEnemies(
@@ -683,6 +846,8 @@ export class MainScene {
                     },
                     onPhaseChanged: (_phase, phaseIndex) => {
                         this.showBossPhaseText(boss, phaseIndex);
+                        this.combatVfx.playBossPhase(boss.getView().x, boss.getView().y);
+                        this.audioManager.playSfx("boss_phase");
                     },
                     onSummonRequested: (summon) => {
                         this.spawnBossMinions(summon, config, boss);
@@ -704,7 +869,11 @@ export class MainScene {
             const definition = enemyPool.enemies[
                 Math.floor(Math.random() * enemyPool.enemies.length)
             ];
-            const enemy = this.enemyFactory.create(definition, config);
+            const enemy = this.enemyFactory.create(definition, config, {
+                eliteAffix: Math.random() < ELITE_SPAWN_CHANCE
+                    ? rollEliteAffix()
+                    : undefined,
+            });
 
             enemy.setPosition(
                 700 +
@@ -851,10 +1020,21 @@ export class MainScene {
                     deltaSeconds,
                 );
                 this.buffManager?.update(deltaSeconds);
+                this.artifactManager?.updateCombatPassives();
+                if (this.player) {
+                    this.techniqueManager?.updateCombatPassives(
+                        this.player.getHp() / Math.max(1, this.player.getMaxHp()),
+                    );
+                }
 
                 this.player?.updateResources(deltaSeconds);
                 this.skillManager?.update(deltaSeconds);
                 this.saveManager?.update(deltaSeconds);
+                this.backgroundSystem.update(
+                    deltaSeconds,
+                    this.visualSettingsManager.getSettings().reduceMotion,
+                );
+                this.updateHudBars();
 
                 if (
                     !this.player ||
@@ -963,19 +1143,25 @@ export class MainScene {
         }
 
         const attackResult =
-            this.player.calculateAttackDamage();
+            this.player.calculateDamage(
+                this.bossController
+                    ? this.artifactManager?.getBossDamageMultiplier() ?? 1
+                    : 1,
+            );
 
         this.player.playAttack();
 
         target.takeDamage(
             attackResult.damage,
         );
+        this.combatVfx.playHit(target.getView().x, target.getView().y - 20, attackResult.isCritical);
+        this.audioManager.playSfx(attackResult.isCritical ? "crit" : "normal_hit");
 
         this.showDamageText(
             target.getView().x,
             target.getView().y - 60,
             attackResult.isCritical
-                ? `-${this.formatNumber(attackResult.damage)} CRIT`
+                ? `-${this.formatNumber(attackResult.damage)} BẠO KÍCH`
                 : `-${this.formatNumber(attackResult.damage)}`,
             attackResult.isCritical
                 ? "#ffd54a"
@@ -1021,12 +1207,32 @@ export class MainScene {
 
             enemy.consumeAttack();
 
-            const damage =
-                enemy.getAttack();
+            const traits = enemy.getDefinition().combatTraits;
+            const burst = traits?.burstChance && Math.random() < traits.burstChance
+                ? traits.burstMultiplier ?? 1
+                : 1;
+            const damage = enemy.getAttack() * burst;
 
             const finalDamage = this.player.takeDamage(
                 damage,
             );
+
+            if (traits?.poisonDamagePercent) {
+                this.player.takeDamage(this.player.getMaxHp() * traits.poisonDamagePercent);
+            }
+
+            if (traits?.summonChance && Math.random() < traits.summonChance && this.enemies.length < 10) {
+                const pool = getChapterEnemyPool(this.stageSystem.getChapter());
+                const definition = pool.enemies[0];
+                const summon = this.enemyFactory.create(
+                    definition,
+                    this.stageSystem.getConfig(),
+                    { rewardEnabled: false },
+                );
+                summon.setPosition(enemy.getView().x + 55, enemy.getView().y);
+                this.enemies.push(summon);
+                this.container.addChild(summon.getView());
+            }
 
             this.showDamageText(
                 this.player.getView().x,
@@ -1117,6 +1323,8 @@ export class MainScene {
                     enemy.getView(),
                 );
 
+                enemy.destroy();
+
                 enemy
                     .getView()
                     .destroy({
@@ -1142,6 +1350,14 @@ export class MainScene {
             return;
         }
 
+        this.eventBus.emit({
+            type: enemy.getDefinition().isBoss
+                ? GameEventType.BOSS_KILLED
+                : GameEventType.ENEMY_KILLED,
+            amount: 1,
+            chapter: this.stageSystem.getChapter(),
+        });
+
         this.rewardLoot(enemy);
     }
 
@@ -1158,6 +1374,7 @@ export class MainScene {
                 stage: this.stageSystem.getStage(),
                 enemyId: enemyDefinition.id,
                 isBoss: enemyDefinition.isBoss,
+                isElite: enemy.isElite(),
             },
         );
 
@@ -1235,15 +1452,37 @@ export class MainScene {
         const isChapterCleared =
             clearedStage === 50;
 
+        this.eventBus.emit({
+            type: GameEventType.STAGE_CLEARED,
+            amount: 1,
+            chapter: this.stageSystem.getChapter(),
+            stage: clearedStage,
+        });
+
         if (
             this.statusText
         ) {
             if (isChapterCleared) {
                 this.statusText.text =
-                    "BOSS CLEAR!";
+                    "ĐÃ HẠ BOSS!";
             } else {
                 this.statusText.text =
-                    "CLEAR!";
+                    "VƯỢT ẢI!";
+            }
+        }
+
+        if (!isChapterCleared) {
+            const rareEvent = this.rareStageEventSystem?.rollAndApply(
+                this.stageSystem.getChapter(),
+            );
+            if (rareEvent) {
+                this.addRecentLoot(`${rareEvent.title}: ${rareEvent.description}`);
+                this.notificationManager.notify({
+                    type: NotificationType.INFO,
+                    title: rareEvent.title,
+                    message: rareEvent.description,
+                });
+                if (this.statusText) this.statusText.text = rareEvent.title;
             }
         }
 
@@ -1360,6 +1599,8 @@ export class MainScene {
     private updateStageUI(
         config: StageConfig,
     ): void {
+        const chapterName = getChapterDefinition(config.chapter).name;
+
         if (
             !this.stageText
         ) {
@@ -1370,10 +1611,10 @@ export class MainScene {
             config.isBossStage
         ) {
             this.stageText.text =
-                `Chương ${config.chapter} - Ải ${config.stage} - BOSS`;
+                `${chapterName} - Ải ${config.stage} - BOSS`;
         } else {
             this.stageText.text =
-                `Chương ${config.chapter} - Ải ${config.stage}`;
+                `${chapterName} - Ải ${config.stage}`;
         }
     }
 
@@ -1419,12 +1660,32 @@ export class MainScene {
         );
     }
 
+    private updateHudBars(): void {
+        if (this.player) {
+            this.hpBar?.setValue(this.player.getHp(), this.player.getMaxHp());
+            this.mpBar?.setValue(this.player.getMp(), this.player.getMaxMp());
+        }
+        if (this.cultivationSystem) {
+            const label = this.cultivationSystem.canBreakthrough()
+                ? "ĐỘT PHÁ!"
+                : `${this.cultivationSystem.getCultivation().toFixed(2)} / ` +
+                    this.cultivationSystem.getRequiredCultivation().toFixed(2);
+            this.cultivationBar?.setValue(
+                this.cultivationSystem.getCultivation(),
+                this.cultivationSystem.getRequiredCultivation(),
+                label,
+            );
+        }
+    }
+
     private showSkillDamage(event: SkillDamageEvent): void {
+        this.combatVfx.playSkill(event.enemy.getView().x, event.enemy.getView().y - 20);
+        this.audioManager.playSfx("skill");
         this.showDamageText(
             event.enemy.getView().x,
             event.enemy.getView().y - 60,
             event.isCritical
-                ? `-${this.formatNumber(event.damage)} CRIT`
+                ? `-${this.formatNumber(event.damage)} BẠO KÍCH`
                 : `-${this.formatNumber(event.damage)}`,
             event.isCritical ? "#ffd54a" : "#7dd3fc",
         );
@@ -1435,6 +1696,8 @@ export class MainScene {
             return;
         }
 
+        this.combatVfx.playHeal(this.player.getView().x, this.player.getView().y - 20);
+
         this.showDamageText(
             this.player.getView().x,
             this.player.getView().y - 90,
@@ -1444,7 +1707,7 @@ export class MainScene {
     }
 
     private formatNumber(value: number): string {
-        return value.toFixed(2);
+        return formatGameNumber(value);
     }
 
     private showRewardText(
@@ -1497,6 +1760,7 @@ export class MainScene {
         for (
             const enemy of this.enemies
         ) {
+            enemy.destroy();
             this.container.removeChild(
                 enemy.getView(),
             );

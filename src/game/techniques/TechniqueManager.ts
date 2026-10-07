@@ -4,6 +4,19 @@ import type {
     TechniqueMilestone,
 } from "./Technique";
 import type { TechniqueState } from "./TechniqueState";
+import type { Inventory } from "../inventory/Inventory";
+import { MATERIAL_DATA } from "../materials/materialData";
+import { StatModifierType } from "../stats/StatModifier";
+import { StatType } from "../stats/StatType";
+import { TechniquePassiveEffectType } from "./Technique";
+import { getTechniqueUpgradeCost } from "./techniqueConfig";
+import type { TechniqueUpgradeCost } from "./techniqueConfig";
+
+export interface TechniqueEconomy {
+    inventory: Inventory;
+    getSpiritStone: () => number;
+    spendSpiritStone: (amount: number) => boolean;
+}
 
 export interface TechniqueEntry {
     definition: TechniqueDefinition;
@@ -16,17 +29,22 @@ export class TechniqueManager {
     private definitions: Map<string, TechniqueDefinition>;
     private states: Map<string, TechniqueState>;
     private version: number;
+    private economy: TechniqueEconomy | null;
+    private activeTransactions: Set<string>;
 
     constructor(
         statSystem: PlayerStatSystem,
         definitions: ReadonlyArray<TechniqueDefinition>,
         syncResourceLimits: () => void,
+        economy: TechniqueEconomy | null = null,
     ) {
         this.statSystem = statSystem;
         this.syncResourceLimits = syncResourceLimits;
         this.definitions = new Map<string, TechniqueDefinition>();
         this.states = new Map<string, TechniqueState>();
         this.version = 0;
+        this.economy = economy;
+        this.activeTransactions = new Set<string>();
 
         for (const definition of definitions) {
             this.definitions.set(definition.id, definition);
@@ -46,6 +64,7 @@ export class TechniqueManager {
             return false;
         }
 
+        if (!this.consumeUpgradeCost(techniqueId, state.level)) return false;
         const previousLevel = state.level;
 
         state.learned = true;
@@ -68,6 +87,8 @@ export class TechniqueManager {
         ) {
             return false;
         }
+
+        if (!this.consumeUpgradeCost(techniqueId, state.level)) return false;
 
         const previousLevel = state.level;
 
@@ -134,6 +155,63 @@ export class TechniqueManager {
 
     public getVersion(): number {
         return this.version;
+    }
+
+    public getUpgradeCost(techniqueId: string): TechniqueUpgradeCost | null {
+        const definition = this.definitions.get(techniqueId);
+        const state = this.states.get(techniqueId);
+        if (!definition || !state || state.level >= definition.maxLevel) return null;
+        return getTechniqueUpgradeCost(state.level);
+    }
+
+    public canUpgrade(techniqueId: string): boolean {
+        const cost = this.getUpgradeCost(techniqueId);
+        if (!cost || this.activeTransactions.has(techniqueId)) return false;
+        if (!this.economy) return false;
+        return this.economy.inventory.hasItem(MATERIAL_DATA.TECHNIQUE_FRAGMENT.id, cost.fragments) &&
+            this.economy.getSpiritStone() >= cost.spiritStone;
+    }
+
+    public getSkillDamageMultiplier(skillId: string, baseMultiplier: number): number {
+        let multiplier = baseMultiplier;
+        for (const definition of this.definitions.values()) {
+            const state = this.states.get(definition.id);
+            if (!state?.learned) continue;
+            for (const milestone of definition.milestones) {
+                if (state.level >= milestone.requiredLevel && milestone.skillModifier?.skillId === skillId) {
+                    multiplier = milestone.skillModifier.damageMultiplier;
+                }
+            }
+        }
+        return multiplier;
+    }
+
+    public updateCombatPassives(hpRatio: number): void {
+        const modifierId = "technique:passive:low-hp-regen";
+        let bonus = 0;
+        for (const definition of this.definitions.values()) {
+            const state = this.states.get(definition.id);
+            if (!state?.learned) continue;
+            for (const milestone of definition.milestones) {
+                const passive = milestone.passiveEffect;
+                if (state.level >= milestone.requiredLevel &&
+                    passive?.type === TechniquePassiveEffectType.LOW_HP_REGEN_MULTIPLIER &&
+                    hpRatio <= passive.threshold) {
+                    bonus = Math.max(bonus, passive.multiplier - 1);
+                }
+            }
+        }
+        if (bonus > 0) {
+            this.statSystem.addModifier({
+                id: modifierId,
+                source: "technique:passive",
+                stat: StatType.HP_REGEN,
+                type: StatModifierType.PERCENT,
+                value: bonus,
+            });
+        } else {
+            this.statSystem.removeModifier(modifierId);
+        }
     }
 
     public restoreStates(
@@ -215,6 +293,25 @@ export class TechniqueManager {
                     );
                 });
             }
+        }
+    }
+
+    private consumeUpgradeCost(techniqueId: string, currentLevel: number): boolean {
+        if (!this.economy || this.activeTransactions.has(techniqueId)) return false;
+        const cost = getTechniqueUpgradeCost(currentLevel);
+        if (!this.canUpgrade(techniqueId)) return false;
+        this.activeTransactions.add(techniqueId);
+        try {
+            if (!this.economy.spendSpiritStone(cost.spiritStone)) return false;
+            if (!this.economy.inventory.removeItem(
+                MATERIAL_DATA.TECHNIQUE_FRAGMENT.id,
+                cost.fragments,
+            )) {
+                return false;
+            }
+            return true;
+        } finally {
+            this.activeTransactions.delete(techniqueId);
         }
     }
 }

@@ -31,6 +31,14 @@ import type {
 } from "./SaveData";
 import { migrateSaveData } from "./SaveMigration";
 import { CURRENT_SAVE_VERSION } from "./SaveVersion";
+import type { QuestManager } from "../quests/QuestManager";
+import type { AchievementManager } from "../achievements/AchievementManager";
+import type { DailyTaskManager } from "../daily/DailyTaskManager";
+import type { AudioManager } from "../audio/AudioManager";
+import type { TutorialManager } from "../tutorial/TutorialManager";
+import type { VisualSettingsManager } from "../settings/VisualSettings";
+import { LocalSaveStorageAdapter } from "./storage/LocalSaveStorageAdapter";
+import type { SyncSaveStorageAdapter } from "./storage/SaveStorageAdapter";
 
 export interface SaveManagerDependencies {
     stageSystem: StageSystem;
@@ -44,11 +52,17 @@ export interface SaveManagerDependencies {
     player: Player;
     getSpiritStone: () => number;
     setSpiritStone: (amount: number) => void;
+    questManager: QuestManager;
+    achievementManager: AchievementManager;
+    dailyTaskManager: DailyTaskManager;
+    audioManager: AudioManager;
+    tutorialManager: TutorialManager;
+    visualSettingsManager: VisualSettingsManager;
 }
 
 export class SaveManager {
     private dependencies: SaveManagerDependencies;
-    private storage: Storage | null;
+    private storageAdapter: SyncSaveStorageAdapter;
     private createdAt: number;
     private lastSavedAt: number | null;
     private autosaveElapsed: number;
@@ -62,10 +76,10 @@ export class SaveManager {
 
     constructor(
         dependencies: SaveManagerDependencies,
-        storage: Storage | null = SaveManager.getDefaultStorage(),
+        storage: Storage | SyncSaveStorageAdapter | null = SaveManager.getDefaultStorage(),
     ) {
         this.dependencies = dependencies;
-        this.storage = storage;
+        this.storageAdapter = SaveManager.toStorageAdapter(storage);
         this.createdAt = 0;
         this.lastSavedAt = null;
         this.autosaveElapsed = 0;
@@ -155,6 +169,7 @@ export class SaveManager {
                         rarity: equipment.rarity,
                         unlockedStatLineCount: equipment.unlockedStatLineCount,
                         lockedStatIndices: [...equipment.lockedStatIndices],
+                        enhancementLevel: equipment.enhancementLevel,
                         rolledStats: equipment.rolledStats.map((modifier) => ({
                             stat: modifier.stat,
                             type: modifier.type,
@@ -169,7 +184,7 @@ export class SaveManager {
                     artifactId: state.artifactId,
                     fragmentCount: state.fragmentCount,
                     owned: state.owned,
-                    level: state.level,
+                    star: state.star,
                 })),
                 equippedArtifactId:
                     artifactManager.getEquippedArtifact()?.id ?? null,
@@ -193,18 +208,25 @@ export class SaveManager {
                     autoCastEnabled: state.autoCastEnabled,
                 })),
             },
+            quests: { states: this.dependencies.questManager.getStates() },
+            achievements: { states: this.dependencies.achievementManager.getStates() },
+            daily: {
+                dayKey: this.dependencies.dailyTaskManager.getDayKey(),
+                states: this.dependencies.dailyTaskManager.getStates(),
+            },
+            settings: {
+                audio: this.dependencies.audioManager.getSettings(),
+                visual: this.dependencies.visualSettingsManager.getSettings(),
+            },
+            tutorial: this.dependencies.tutorialManager.getState(),
         };
     }
 
     public save(): boolean {
-        if (!this.storage) {
-            return false;
-        }
-
         try {
             const data = this.createSaveData();
 
-            this.storage.setItem(SAVE_STORAGE_KEY, JSON.stringify(data));
+            this.storageAdapter.saveSync(JSON.stringify(data));
             this.lastSavedAt = data.updatedAt;
             this.dirty = false;
             this.debounceElapsed = 0;
@@ -219,14 +241,10 @@ export class SaveManager {
     }
 
     public load(): SaveLoadResult {
-        if (!this.storage) {
-            return { success: false, reason: "localStorage unavailable" };
-        }
-
         let serialized: string | null;
 
         try {
-            serialized = this.storage.getItem(SAVE_STORAGE_KEY);
+            serialized = this.storageAdapter.loadSync();
         } catch (error) {
             console.warn("Failed to read save data", error);
             return { success: false, reason: "Failed to read save data" };
@@ -318,7 +336,7 @@ export class SaveManager {
 
     public hasSave(): boolean {
         try {
-            return Boolean(this.storage?.getItem(SAVE_STORAGE_KEY));
+            return Boolean(this.storageAdapter.loadSync());
         } catch {
             return false;
         }
@@ -326,11 +344,50 @@ export class SaveManager {
 
     public deleteSave(): void {
         try {
-            this.storage?.removeItem(SAVE_STORAGE_KEY);
+            this.storageAdapter.deleteSync();
             this.lastSavedAt = null;
             this.automaticSaveBlocked = false;
         } catch (error) {
             console.warn("Failed to delete save data", error);
+        }
+    }
+
+    public exportSaveJson(): string | null {
+        try {
+            return JSON.stringify(this.createSaveData(), null, 2);
+        } catch (error) {
+            console.warn("Failed to export save data", error);
+            return null;
+        }
+    }
+
+    public blockAutomaticSave(): void {
+        this.automaticSaveBlocked = true;
+        this.dirty = false;
+    }
+
+    public importSaveJson(serialized: string): SaveLoadResult {
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(serialized);
+        } catch {
+            return { success: false, reason: "JSON không hợp lệ" };
+        }
+        const migration = migrateSaveData(parsed);
+        if (!migration.success || !migration.data || !this.hasValidRootSections(migration.data)) {
+            return { success: false, reason: migration.reason ?? "Cấu trúc save không hợp lệ" };
+        }
+        try {
+            this.restore(migration.data);
+            this.createdAt = Number.isFinite(migration.data.createdAt)
+                ? migration.data.createdAt
+                : Date.now();
+            this.automaticSaveBlocked = false;
+            if (!this.save()) return { success: false, reason: "Không thể ghi save" };
+            return { success: true, version: CURRENT_SAVE_VERSION };
+        } catch (error) {
+            console.warn("Failed to import save data", error);
+            return { success: false, reason: "Không thể khôi phục save" };
         }
     }
 
@@ -340,6 +397,10 @@ export class SaveManager {
         this.dependencies.inventory.clear();
         this.dependencies.cultivationSystem.reset();
         this.dependencies.skillManager.reset();
+        this.dependencies.questManager.reset();
+        this.dependencies.achievementManager.reset();
+        this.dependencies.dailyTaskManager.reset();
+        this.dependencies.tutorialManager.reset();
         this.dependencies.stageSystem.reset();
         this.dependencies.setSpiritStone(0);
         this.dependencies.player.restoreFullResources();
@@ -484,6 +545,12 @@ export class SaveManager {
         });
         skillManager.restoreStates(skillStates);
         skillManager.resetCooldowns();
+        this.dependencies.questManager.restore(data.quests.states);
+        this.dependencies.achievementManager.restore(data.achievements.states);
+        this.dependencies.dailyTaskManager.restore(data.daily.dayKey, data.daily.states);
+        this.dependencies.audioManager.setSettings(data.settings.audio);
+        this.dependencies.visualSettingsManager.setSettings(data.settings.visual);
+        this.dependencies.tutorialManager.restore(data.tutorial);
 
         if (!stageSystem.restoreProgress(
             data.progress.chapter,
@@ -538,6 +605,7 @@ export class SaveManager {
             saved.instanceId.length === 0 ||
             !this.isEquipmentRarity(saved.rarity) ||
             !Number.isFinite(saved.unlockedStatLineCount) ||
+            !Number.isFinite(saved.enhancementLevel) ||
             !Array.isArray(saved.rolledStats) ||
             !Array.isArray(saved.lockedStatIndices)
         ) {
@@ -579,6 +647,10 @@ export class SaveManager {
                 Math.floor(saved.unlockedStatLineCount),
             ),
             lockedStatIndices,
+            enhancementLevel: Math.min(
+                10,
+                Math.max(0, Math.floor(saved.enhancementLevel)),
+            ),
         };
     }
 
@@ -605,6 +677,8 @@ export class SaveManager {
             cultivationSystem.getStage(),
             cultivationSystem.getLayer(),
             skillManager.getVersion(),
+            this.dependencies.questManager.getVersion(),
+            this.dependencies.tutorialManager.getVersion(),
         ].join("|");
     }
 
@@ -623,14 +697,24 @@ export class SaveManager {
             Array.isArray(data.techniques.states) &&
             this.isRecord(data.cultivation) &&
             this.isRecord(data.skills) &&
-            Array.isArray(data.skills.states);
+            Array.isArray(data.skills.states) &&
+            this.isRecord(data.quests) &&
+            Array.isArray(data.quests.states) &&
+            this.isRecord(data.achievements) &&
+            Array.isArray(data.achievements.states) &&
+            this.isRecord(data.daily) &&
+            Array.isArray(data.daily.states) &&
+            this.isRecord(data.settings) &&
+            this.isRecord(data.settings.audio) &&
+            this.isRecord(data.settings.visual) &&
+            this.isRecord(data.tutorial);
     }
 
     private isValidArtifactState(state: ArtifactStateSaveData): boolean {
         return Number.isFinite(state.fragmentCount) &&
             state.fragmentCount >= 0 &&
             typeof state.owned === "boolean" &&
-            Number.isFinite(state.level);
+            Number.isFinite(state.star);
     }
 
     private isPositiveFiniteQuantity(quantity: number): boolean {
@@ -651,5 +735,18 @@ export class SaveManager {
         } catch {
             return null;
         }
+    }
+
+    private static toStorageAdapter(
+        storage: Storage | SyncSaveStorageAdapter | null,
+    ): SyncSaveStorageAdapter {
+        if (
+            storage &&
+            typeof (storage as Partial<SyncSaveStorageAdapter>).loadSync === "function"
+        ) {
+            return storage as SyncSaveStorageAdapter;
+        }
+
+        return new LocalSaveStorageAdapter(storage as Storage | null, SAVE_STORAGE_KEY);
     }
 }

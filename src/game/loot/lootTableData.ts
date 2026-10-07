@@ -37,6 +37,7 @@ export const LOOT_TABLE_DATA: Readonly<Record<string, LootTable>> = {
             { itemId: MATERIAL_DATA.MONSTER_CORE.id, chance: 1, minQuantity: 2, maxQuantity: 5 },
             { itemId: MATERIAL_DATA.MONSTER_BLOOD_ESSENCE.id, chance: 0.6, minQuantity: 1, maxQuantity: 2 },
             { itemId: MATERIAL_DATA.MONSTER_KING_CORE.id, chance: 0.3, minQuantity: 1, maxQuantity: 1 },
+            { itemId: MATERIAL_DATA.TECHNIQUE_FRAGMENT.id, chance: 1, minQuantity: 2, maxQuantity: 4 },
         ],
     },
 };

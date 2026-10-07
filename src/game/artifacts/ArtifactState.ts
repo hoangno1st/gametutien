@@ -3,5 +3,5 @@ export interface ArtifactState {
     fragmentCount: number;
     owned: boolean;
     equipped: boolean;
-    level: number;
+    star: number;
 }

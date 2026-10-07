@@ -15,4 +15,5 @@ export interface LootContext {
     stage: number;
     enemyId: string;
     isBoss: boolean;
+    isElite?: boolean;
 }

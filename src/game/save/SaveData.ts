@@ -4,6 +4,12 @@ import type { EquipmentRarity } from "../equipment/EquipmentRarity";
 import type { EquipmentSlot } from "../equipment/EquipmentSlot";
 import type { StatModifierType } from "../stats/StatModifier";
 import type { StatType } from "../stats/StatType";
+import type { QuestState } from "../quests/Quest";
+import type { AchievementState } from "../achievements/AchievementManager";
+import type { DailyTaskState } from "../daily/DailyTaskManager";
+import type { AudioSettings } from "../audio/AudioManager";
+import type { TutorialState } from "../tutorial/TutorialManager";
+import type { VisualSettings } from "../settings/VisualSettings";
 
 export interface ProgressSaveData {
     chapter: number;
@@ -38,6 +44,7 @@ export interface EquipmentInstanceSaveData {
     rolledStats: RolledStatSaveData[];
     unlockedStatLineCount: number;
     lockedStatIndices: number[];
+    enhancementLevel: number;
 }
 
 export interface InventorySaveData {
@@ -54,7 +61,7 @@ export interface ArtifactStateSaveData {
     artifactId: string;
     fragmentCount: number;
     owned: boolean;
-    level: number;
+    star: number;
 }
 
 export interface ArtifactSaveData {
@@ -102,6 +109,11 @@ export interface GameSaveData {
     techniques: TechniqueSaveData;
     cultivation: CultivationSaveData;
     skills: SkillSaveData;
+    quests: { states: QuestState[] };
+    achievements: { states: AchievementState[] };
+    daily: { dayKey: string; states: DailyTaskState[] };
+    settings: { audio: AudioSettings; visual: VisualSettings };
+    tutorial: TutorialState;
 }
 
 export interface SaveLoadResult {

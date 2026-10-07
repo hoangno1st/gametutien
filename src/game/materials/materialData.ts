@@ -1,8 +1,20 @@
 import { ItemRarity, ItemType } from "../items/Item";
 import type { MaterialDefinition } from "./Material";
 import { MaterialCategory } from "./MaterialCategory";
+import { CHAPTER_DEFINITIONS } from "../chapters/chapterData";
 
 export const MATERIAL_DATA = {
+    TECHNIQUE_FRAGMENT: {
+        id: "technique_fragment",
+        name: "Tàn Trang Công Pháp",
+        description: "Trang sách cổ dùng để lĩnh ngộ và nâng cấp Công Pháp.",
+        type: ItemType.MATERIAL,
+        rarity: ItemRarity.RARE,
+        stackable: true,
+        maxStack: 999999,
+        materialCategory: MaterialCategory.ESSENCE,
+        tier: 1,
+    },
     EQUIPMENT_ESSENCE: {
         id: "equipment_essence",
         name: "Luyện Khí Tinh Hoa",
@@ -117,5 +129,30 @@ export const MATERIAL_DATA = {
     },
 } as const satisfies Record<string, MaterialDefinition>;
 
-export const MATERIAL_DEFINITIONS: ReadonlyArray<MaterialDefinition> =
-    Object.values(MATERIAL_DATA);
+const TIERED_MATERIAL_NAMES = ["Khoáng Thạch", "Linh Thảo", "Yêu Cốt", "Boss Tinh Hạch"] as const;
+const TIERED_MATERIAL_CATEGORIES = [
+    MaterialCategory.ORE,
+    MaterialCategory.HERB,
+    MaterialCategory.MONSTER,
+    MaterialCategory.BOSS,
+] as const;
+
+export const TIERED_MATERIAL_DEFINITIONS: ReadonlyArray<MaterialDefinition> =
+    CHAPTER_DEFINITIONS.slice(1).flatMap((chapter) =>
+        TIERED_MATERIAL_NAMES.map((name, index) => ({
+            id: `chapter_${chapter.chapter}_material_${index + 1}`,
+            name: `${name} ${chapter.name}`,
+            description: `Vật liệu bậc ${chapter.materialTier} từ ${chapter.name}.`,
+            type: ItemType.MATERIAL,
+            rarity: index === 3 ? ItemRarity.EPIC : ItemRarity.RARE,
+            stackable: true,
+            maxStack: 999999,
+            materialCategory: TIERED_MATERIAL_CATEGORIES[index],
+            tier: chapter.materialTier,
+        })),
+    );
+
+export const MATERIAL_DEFINITIONS: ReadonlyArray<MaterialDefinition> = [
+    ...Object.values(MATERIAL_DATA),
+    ...TIERED_MATERIAL_DEFINITIONS,
+];

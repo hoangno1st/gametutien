@@ -1,6 +1,8 @@
 import { StatModifierType } from "../stats/StatModifier";
 import { StatType } from "../stats/StatType";
 import type { TechniqueDefinition } from "./Technique";
+import { TechniquePassiveEffectType } from "./Technique";
+import { SKILL_IDS } from "../skills/skillData";
 
 export const TECHNIQUE_DATA: ReadonlyArray<TechniqueDefinition> = [
     {
@@ -47,15 +49,13 @@ export const TECHNIQUE_DATA: ReadonlyArray<TechniqueDefinition> = [
             },
             {
                 requiredLevel: 20,
-                description: "Hồi HP +2/s",
-                modifiers: [
-                    {
-                        id: "clear_heart_level_20_hp_regen",
-                        stat: StatType.HP_REGEN,
-                        type: StatModifierType.FLAT,
-                        value: 2,
-                    },
-                ],
+                description: "Khi HP dưới 30%, Hồi HP x2",
+                modifiers: [],
+                passiveEffect: {
+                    type: TechniquePassiveEffectType.LOW_HP_REGEN_MULTIPLIER,
+                    threshold: 0.3,
+                    multiplier: 2,
+                },
             },
         ],
     },
@@ -103,13 +103,13 @@ export const TECHNIQUE_DATA: ReadonlyArray<TechniqueDefinition> = [
             },
             {
                 requiredLevel: 20,
-                description: "MP +20%",
+                description: "Hồi MP +25%",
                 modifiers: [
                     {
-                        id: "great_void_level_20_max_mp_percent",
-                        stat: StatType.MAX_MP,
+                        id: "great_void_level_20_mp_regen_percent",
+                        stat: StatType.MP_REGEN,
                         type: StatModifierType.PERCENT,
-                        value: 0.2,
+                        value: 0.25,
                     },
                 ],
             },
@@ -159,15 +159,12 @@ export const TECHNIQUE_DATA: ReadonlyArray<TechniqueDefinition> = [
             },
             {
                 requiredLevel: 20,
-                description: "Công +15%",
-                modifiers: [
-                    {
-                        id: "heavenly_sword_level_20_attack_percent",
-                        stat: StatType.ATTACK,
-                        type: StatModifierType.PERCENT,
-                        value: 0.15,
-                    },
-                ],
+                description: "Kiếm Khí: 160% -> 190% Công",
+                modifiers: [],
+                skillModifier: {
+                    skillId: SKILL_IDS.SWORD_QI,
+                    damageMultiplier: 1.9,
+                },
             },
         ],
     },

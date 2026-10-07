@@ -30,17 +30,24 @@ export class SkillCombatSystem {
     private skillManager: SkillManager;
     private getEnemies: () => ReadonlyArray<Enemy>;
     private callbacks: SkillCombatCallbacks;
+    private getDamageMultiplier: () => number;
+    private getSkillDamageMultiplier: (skillId: string, baseMultiplier: number) => number;
 
     constructor(
         player: Player,
         skillManager: SkillManager,
         getEnemies: () => ReadonlyArray<Enemy>,
         callbacks: SkillCombatCallbacks,
+        getDamageMultiplier: () => number = () => 1,
+        getSkillDamageMultiplier: (skillId: string, baseMultiplier: number) => number =
+            (_skillId, baseMultiplier) => baseMultiplier,
     ) {
         this.player = player;
         this.skillManager = skillManager;
         this.getEnemies = getEnemies;
         this.callbacks = callbacks;
+        this.getDamageMultiplier = getDamageMultiplier;
+        this.getSkillDamageMultiplier = getSkillDamageMultiplier;
     }
 
     public updateAutoCast(): boolean {
@@ -74,6 +81,8 @@ export class SkillCombatSystem {
         if (!this.player.spendMp(definition.mpCost)) {
             return false;
         }
+
+        this.player.playSkill();
 
         this.applyEffect(definition, livingEnemies);
         this.skillManager.startCooldown(skillId);
@@ -122,7 +131,10 @@ export class SkillCombatSystem {
             }
 
             const result = this.player.calculateDamage(
-                definition.damageMultiplier ?? 1,
+                this.getSkillDamageMultiplier(
+                    definition.id,
+                    definition.damageMultiplier ?? 1,
+                ) * this.getDamageMultiplier(),
             );
 
             enemy.takeDamage(result.damage);

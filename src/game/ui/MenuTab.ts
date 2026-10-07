@@ -8,5 +8,6 @@ export enum MenuTab {
     CULTIVATION = "cultivation",
     TECHNIQUES = "techniques",
     ARTIFACTS = "artifacts",
+    QUESTS = "quests",
     SETTINGS = "settings",
 }

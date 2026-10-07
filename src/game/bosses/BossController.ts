@@ -214,6 +214,7 @@ export class BossController {
     }
 
     private castSkill(skill: BossSkillDefinition): boolean {
+        this.boss.playSkillAnimation();
         if (skill.type === BossSkillType.HEAVY_ATTACK) {
             if (
                 !this.callbacks.isPlayerAlive() ||

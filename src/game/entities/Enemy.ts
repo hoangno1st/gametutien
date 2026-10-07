@@ -4,6 +4,7 @@ import {
     Text,
 } from "pixi.js";
 import type { EnemyDefinition } from "../enemies/EnemyDefinition";
+import { formatGameNumber } from "../utils/NumberFormatter";
 import { EnemyArchetype, ENEMY_ARCHETYPE_LABELS } from "../enemies/EnemyArchetype";
 import {
     BERSERKER_ENRAGE_ATTACK_MULTIPLIER,
@@ -11,6 +12,10 @@ import {
     BERSERKER_ENRAGE_HP_RATIO,
     BERSERKER_ENRAGE_MOVE_SPEED_MULTIPLIER,
 } from "../enemies/enemyArchetypeConfig";
+import { ENEMY_ARCHETYPE_VISUALS } from "../enemies/enemyVisualConfig";
+import { EnemyAnimationController } from "./EnemyAnimationController";
+import type { EliteAffix } from "../enemies/EliteEnemy";
+import { ELITE_AFFIX_CONFIG } from "../enemies/EliteEnemy";
 
 export interface RuntimeEnemyStats {
     maxHp: number;
@@ -22,6 +27,7 @@ export interface RuntimeEnemyStats {
 
 export interface EnemyRuntimeOptions {
     rewardEnabled?: boolean;
+    eliteAffix?: EliteAffix;
 }
 
 export interface EnemyPhaseMultipliers {
@@ -50,6 +56,8 @@ export class Enemy {
     private phaseMoveSpeedMultiplier: number;
     private phaseAttackSpeedMultiplier: number;
     private temporaryAttackMultiplier: number;
+    private animationController: EnemyAnimationController;
+    private eliteAffix: EliteAffix | null;
 
     constructor(
         definition: EnemyDefinition,
@@ -69,12 +77,15 @@ export class Enemy {
         this.enraged = false;
         this.definition = definition;
         this.rewardEnabled = options.rewardEnabled ?? true;
+        this.eliteAffix = options.eliteAffix ?? null;
         this.phaseAttackMultiplier = 1;
         this.phaseMoveSpeedMultiplier = 1;
         this.phaseAttackSpeedMultiplier = 1;
         this.temporaryAttackMultiplier = 1;
 
         this.body = new Graphics();
+        const visualConfig = definition.visualConfig ??
+            ENEMY_ARCHETYPE_VISUALS[definition.archetype];
 
         if (definition.isBoss) {
             this.body.rect(
@@ -84,7 +95,7 @@ export class Enemy {
                 110,
             );
 
-            this.body.fill("#b339ff");
+            this.body.fill(visualConfig.color);
         } else {
             this.body.rect(
                 -20,
@@ -93,8 +104,13 @@ export class Enemy {
                 60,
             );
 
-            this.body.fill("#ff5555");
+            this.body.fill(visualConfig.color);
         }
+
+        this.animationController = new EnemyAnimationController(
+            this.body,
+            visualConfig.scale * (definition.isBoss ? 1.25 : 1),
+        );
 
         this.nameText = new Text({
             text: definition.isBoss
@@ -121,6 +137,15 @@ export class Enemy {
         this.hpText.anchor.set(0.5);
         this.hpText.y = definition.isBoss ? -68 : -40;
 
+        if (this.eliteAffix) {
+            const aura = new Graphics()
+                .circle(0, 5, definition.isBoss ? 55 : 34)
+                .fill({ color: ELITE_AFFIX_CONFIG[this.eliteAffix].auraColor, alpha: 0.13 })
+                .stroke({ color: ELITE_AFFIX_CONFIG[this.eliteAffix].auraColor, width: 2, alpha: 0.7 });
+            this.container.addChild(aura);
+            this.nameText.text += `\n[ELITE: ${ELITE_AFFIX_CONFIG[this.eliteAffix].label}]`;
+        }
+
         this.container.addChild(
             this.body,
             this.nameText,
@@ -139,6 +164,7 @@ export class Enemy {
     }
 
     public moveLeft(): void {
+        this.animationController.playMove();
         this.container.x -= this.getMoveSpeed();
     }
 
@@ -210,6 +236,7 @@ export class Enemy {
 
     public consumeAttack(): void {
         this.attackTimer = 0;
+        this.animationController.playAttack();
     }
 
     public isInAttackRange(targetX: number): boolean {
@@ -222,6 +249,12 @@ export class Enemy {
 
     public isRewardEnabled(): boolean {
         return this.rewardEnabled;
+    }
+
+    public isElite(): boolean { return this.eliteAffix !== null; }
+    public getEliteAffix(): EliteAffix | null { return this.eliteAffix; }
+    public getDamageMultiplierFromTraits(): number {
+        return 1 - Math.min(0.9, Math.max(0, this.definition.combatTraits?.damageReduction ?? 0));
     }
 
     public setPhaseMultipliers(multipliers: EnemyPhaseMultipliers): void {
@@ -237,7 +270,7 @@ export class Enemy {
     public takeDamage(
         damage: number,
     ): void {
-        this.hp -= damage;
+        this.hp -= Math.max(0, damage) * this.getDamageMultiplierFromTraits();
 
         if (this.hp < 0) {
             this.hp = 0;
@@ -247,7 +280,10 @@ export class Enemy {
             `${this.formatNumber(this.hp)} / ${this.formatNumber(this.maxHp)}`;
 
         if (!this.isDead()) {
+            this.animationController.playHit();
             this.updateBehavior();
+        } else {
+            this.animationController.playDeath();
         }
     }
 
@@ -259,7 +295,10 @@ export class Enemy {
         return this.container;
     }
 
+    public playSkillAnimation(): void { this.animationController.playSkill(); }
+    public destroy(): void { this.animationController.destroy(); }
+
     private formatNumber(value: number): string {
-        return value.toFixed(2);
+        return formatGameNumber(value);
     }
 }

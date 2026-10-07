@@ -1,8 +1,9 @@
 import { CultivationRealm } from "../cultivation/CultivationRealm";
 import type { EquipmentDefinition } from "./Equipment";
 import { EquipmentSlot } from "./EquipmentSlot";
+import { CHAPTER_DEFINITIONS } from "../chapters/chapterData";
 
-export const EQUIPMENT_DATA: Readonly<
+const BASE_EQUIPMENT_DATA: Readonly<
     Record<string, EquipmentDefinition>
 > = {
     IRON_SWORD: {
@@ -68,4 +69,28 @@ export const EQUIPMENT_DATA: Readonly<
         slot: EquipmentSlot.BRACELET,
         requiredRealm: CultivationRealm.FOUNDATION_ESTABLISHMENT,
     },
+};
+
+const GENERATED_EQUIPMENT_DATA: Record<string, EquipmentDefinition> = {};
+for (const chapter of CHAPTER_DEFINITIONS.slice(1)) {
+    const entries = [
+        ["weapon", "Linh Kiếm", EquipmentSlot.WEAPON],
+        ["armor", "Pháp Bào", EquipmentSlot.ARMOR],
+        ["bracelet", "Linh Hoàn", EquipmentSlot.BRACELET],
+    ] as const;
+    for (const [suffix, label, slot] of entries) {
+        const id = `chapter_${chapter.chapter}_${suffix}`;
+        GENERATED_EQUIPMENT_DATA[id] = {
+            id,
+            name: `${chapter.name} ${label}`,
+            description: `Trang bị luyện chế từ vật liệu ${chapter.name}.`,
+            slot,
+            requiredRealm: chapter.recommendedRealm,
+        };
+    }
+}
+
+export const EQUIPMENT_DATA = {
+    ...BASE_EQUIPMENT_DATA,
+    ...GENERATED_EQUIPMENT_DATA,
 };

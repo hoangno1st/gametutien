@@ -3,6 +3,7 @@ import { EQUIPMENT_DATA } from "../equipment/equipmentData";
 import { MATERIAL_DATA } from "../materials/materialData";
 import type { CraftingRecipe } from "./CraftingRecipe";
 import { CraftingType } from "./CraftingType";
+import { CHAPTER_DEFINITIONS } from "../chapters/chapterData";
 
 export const CRAFTING_RECIPE_DATA = {
     QINGYUN_SWORD: {
@@ -91,5 +92,47 @@ export const CRAFTING_RECIPE_DATA = {
     },
 } as const satisfies Record<string, CraftingRecipe>;
 
-export const CRAFTING_RECIPES: ReadonlyArray<CraftingRecipe> =
-    Object.values(CRAFTING_RECIPE_DATA);
+const GENERATED_RECIPES: ReadonlyArray<CraftingRecipe> =
+    CHAPTER_DEFINITIONS.slice(1).flatMap((chapter) => {
+        const materialIds = [1, 2, 3, 4].map(
+            (index) => `chapter_${chapter.chapter}_material_${index}`,
+        );
+        const equipmentRecipes: CraftingRecipe[] = [
+            ["weapon", "Linh Kiếm"],
+            ["armor", "Pháp Bào"],
+            ["bracelet", "Linh Hoàn"],
+        ].map(([suffix, label]) => ({
+            id: `craft_chapter_${chapter.chapter}_${suffix}`,
+            name: `${chapter.name} ${label}`,
+            description: `Luyện chế trang bị bậc ${chapter.materialTier}.`,
+            type: CraftingType.EQUIPMENT,
+            materials: [
+                { itemId: materialIds[0], quantity: 8 + chapter.chapter * 2 },
+                { itemId: materialIds[2], quantity: 3 + chapter.chapter },
+                { itemId: materialIds[3], quantity: 1 },
+            ],
+            spiritStoneCost: 100 * chapter.chapter * chapter.chapter,
+            requiredRealm: chapter.recommendedRealm,
+            outputId: `chapter_${chapter.chapter}_${suffix}`,
+        }));
+        const pillRecipes: CraftingRecipe[] = ["healing_pill", "spirit_restoration_pill"]
+            .map((outputId, index) => ({
+                id: `craft_chapter_${chapter.chapter}_pill_${index + 1}`,
+                name: `${chapter.name} ${index === 0 ? "Hồi Huyết Đan" : "Hồi Linh Đan"}`,
+                description: `Đan dược bậc ${chapter.materialTier}.`,
+                type: CraftingType.ALCHEMY,
+                materials: [
+                    { itemId: materialIds[1], quantity: 5 + chapter.chapter },
+                    { itemId: materialIds[2], quantity: 2 + chapter.chapter },
+                ],
+                spiritStoneCost: 75 * chapter.chapter * chapter.chapter,
+                requiredRealm: chapter.recommendedRealm,
+                outputId,
+            }));
+        return [...equipmentRecipes, ...pillRecipes];
+    });
+
+export const CRAFTING_RECIPES: ReadonlyArray<CraftingRecipe> = [
+    ...Object.values(CRAFTING_RECIPE_DATA),
+    ...GENERATED_RECIPES,
+];

@@ -9,4 +9,4 @@ export const MATERIAL_DROP_MULTIPLIER = 1;
 export const BOSS_MATERIAL_MULTIPLIER = 1;
 
 // DEBUG ONLY: raises entry chances without changing production loot tables.
-export const DEBUG_DROP_MULTIPLIER = 5;
+export const DEBUG_DROP_MULTIPLIER = import.meta.env.DEV ? 5 : 1;

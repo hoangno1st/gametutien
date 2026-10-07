@@ -11,6 +11,7 @@ import {
     MATERIAL_DROP_MULTIPLIER,
     SPIRIT_STONE_DROP,
 } from "./lootConfig";
+import { getChapterDefinition } from "../chapters/chapterData";
 
 export interface ItemDrop {
     item: MaterialDefinition;
@@ -56,14 +57,19 @@ export class LootSystem {
             context.chapter,
             context.isBoss,
         );
+        const eliteCatalystDrop = context.isElite
+            ? this.catalystDropSystem.rollEliteDrop()
+            : null;
 
         return {
             materials: this.rollMaterials(enemyDefinition, context),
             artifactFragments: artifactDrop ? [artifactDrop] : [],
-            catalysts: catalystDrop ? [catalystDrop] : [],
-            spiritStone: context.isBoss
+            catalysts: [catalystDrop, eliteCatalystDrop]
+                .filter((drop): drop is CatalystDrop => drop !== null),
+            spiritStone: Math.floor((context.isBoss
                 ? SPIRIT_STONE_DROP.boss
-                : SPIRIT_STONE_DROP.normal,
+                : SPIRIT_STONE_DROP.normal) *
+                getChapterDefinition(context.chapter).spiritStoneMultiplier),
         };
     }
 
@@ -78,7 +84,8 @@ export class LootSystem {
         }
 
         const quantityMultiplier = MATERIAL_DROP_MULTIPLIER *
-            (context.isBoss ? BOSS_MATERIAL_MULTIPLIER : 1);
+            (context.isBoss ? BOSS_MATERIAL_MULTIPLIER : 1) *
+            (context.isElite ? 1.75 : 1);
         const drops: ItemDrop[] = [];
 
         for (const entry of table.entries) {
@@ -111,6 +118,26 @@ export class LootSystem {
             );
 
             drops.push({ item: material, amount });
+        }
+
+        const chapter = getChapterDefinition(context.chapter);
+        if (chapter.materialTier > 1) {
+            const tierMaterials = Array.from(this.materials.values())
+                .filter((material) => material.tier === chapter.materialTier);
+            const candidates = context.isBoss ? tierMaterials : tierMaterials.slice(0, 3);
+            for (const material of candidates) {
+                const chance = context.isBoss ? 0.85 : 0.25;
+                if (this.random() < chance) {
+                    drops.push({
+                        item: material,
+                        amount: context.isBoss ? 2 : 1,
+                    });
+                }
+            }
+        }
+        if (context.isElite && this.random() < 0.18) {
+            const techniqueFragment = this.materials.get("technique_fragment");
+            if (techniqueFragment) drops.push({ item: techniqueFragment, amount: 1 });
         }
 
         return drops;

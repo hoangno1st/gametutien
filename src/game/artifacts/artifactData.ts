@@ -1,6 +1,7 @@
 import { StatModifierType } from "../stats/StatModifier";
 import { StatType } from "../stats/StatType";
 import type { ArtifactDefinition } from "./Artifact";
+import { ArtifactPassiveType } from "./Artifact";
 import { ArtifactRarity } from "./ArtifactRarity";
 
 export const ARTIFACT_DATA: ReadonlyArray<ArtifactDefinition> = [
@@ -25,6 +26,13 @@ export const ARTIFACT_DATA: ReadonlyArray<ArtifactDefinition> = [
                 source: "artifact:primordial_pearl",
             },
         ],
+        passive: {
+            type: ArtifactPassiveType.LOW_HP_ATTACK,
+            baseValue: 0.2,
+            valuePerStar: 0.015,
+            threshold: 0.4,
+            description: "Khi HP dưới 40%, Công +20%.",
+        },
     },
     {
         id: "azure_spirit_sword_embryo",
@@ -47,6 +55,12 @@ export const ARTIFACT_DATA: ReadonlyArray<ArtifactDefinition> = [
                 source: "artifact:azure_spirit_sword_embryo",
             },
         ],
+        passive: {
+            type: ArtifactPassiveType.BOSS_DAMAGE,
+            baseValue: 0.15,
+            valuePerStar: 0.01,
+            description: "Sát thương lên Boss +15%.",
+        },
     },
     {
         id: "nine_heavens_jade",
@@ -55,13 +69,6 @@ export const ARTIFACT_DATA: ReadonlyArray<ArtifactDefinition> = [
         rarity: ArtifactRarity.PURPLE,
         baseModifiers: [
             {
-                id: "nine_heavens_jade_cultivation_speed",
-                stat: StatType.CULTIVATION_SPEED,
-                type: StatModifierType.FLAT,
-                value: 0.15,
-                source: "artifact:nine_heavens_jade",
-            },
-            {
                 id: "nine_heavens_jade_max_mp",
                 stat: StatType.MAX_MP,
                 type: StatModifierType.FLAT,
@@ -69,5 +76,11 @@ export const ARTIFACT_DATA: ReadonlyArray<ArtifactDefinition> = [
                 source: "artifact:nine_heavens_jade",
             },
         ],
+        passive: {
+            type: ArtifactPassiveType.CULTIVATION_BONUS,
+            baseValue: 0.15,
+            valuePerStar: 0.01,
+            description: "Tốc độ tu luyện +15%.",
+        },
     },
 ];

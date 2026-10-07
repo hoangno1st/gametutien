@@ -4,6 +4,9 @@ import {
     Graphics,
     Text,
 } from "pixi.js";
+import gsap from "gsap";
+import { GameTheme } from "./theme/GameTheme";
+import { formatGameNumber } from "../utils/NumberFormatter";
 import { ArtifactManager } from "../artifacts/ArtifactManager";
 import type { AlchemyManager } from "../alchemy/AlchemyManager";
 import { PillEffectType } from "../alchemy/Pill";
@@ -31,6 +34,11 @@ import { CULTIVATION_LAYERS_PER_STAGE } from "../cultivation/cultivationConfig";
 import { Player } from "../entities/Player";
 import type { EquipmentInstance } from "../equipment/EquipmentInstance";
 import { EquipmentManager } from "../equipment/EquipmentManager";
+import type { EquipmentEnhancementManager } from "../equipment/EquipmentEnhancementManager";
+import {
+    getEffectiveEquipmentStatValue,
+    MAX_EQUIPMENT_ENHANCEMENT,
+} from "../equipment/equipmentEnhancementConfig";
 import type { EquipmentSalvageManager } from "../equipment/EquipmentSalvageManager";
 import { EquipmentSalvageFailReason } from "../equipment/EquipmentSalvageManager";
 import type { EquipmentStatUnlockManager } from "../equipment/EquipmentStatUnlockManager";
@@ -63,18 +71,31 @@ import type { EquipmentCraftResult } from "../refining/EquipmentCraftResult";
 import type { RefiningManager } from "../refining/RefiningManager";
 import type { SaveManager } from "../save/SaveManager";
 import { CURRENT_SAVE_VERSION } from "../save/SaveVersion";
+import { GAME_VERSION } from "../core/GameVersion";
 import { StatModifierType } from "../stats/StatModifier";
 import type { StatModifier } from "../stats/StatModifier";
 import { StatType } from "../stats/StatType";
 import { StageSystem } from "../systems/StageSystem";
 import { TechniqueManager } from "../techniques/TechniqueManager";
 import { MenuTab } from "./MenuTab";
+import type { GameEventBus } from "../events/GameEvent";
+import { GameEventType } from "../events/GameEvent";
+import type { QuestManager } from "../quests/QuestManager";
+import type { AchievementManager } from "../achievements/AchievementManager";
+import type { DailyTaskManager } from "../daily/DailyTaskManager";
+import type { AudioManager } from "../audio/AudioManager";
+import type { TutorialManager } from "../tutorial/TutorialManager";
+import type { VisualSettingsManager } from "../settings/VisualSettings";
+import { VfxQuality } from "../settings/VisualSettings";
+import type { NotificationManager } from "./notifications/NotificationManager";
+import { NotificationType } from "./notifications/NotificationManager";
+import { TERM_TOOLTIPS, TermTooltip } from "./tooltips/TermTooltips";
 
 const GAME_WIDTH = 1280;
 const GAME_HEIGHT = 240;
-const MENU_HEIGHT = 300;
+const MENU_HEIGHT = 360;
 const OPEN_HEIGHT = GAME_HEIGHT + MENU_HEIGHT;
-const TAB_BUTTON_WIDTH = 119;
+const TAB_BUTTON_WIDTH = 112;
 const TAB_BUTTON_HEIGHT = 36;
 const TAB_BUTTON_GAP = 5;
 const TAB_NORMAL_COLOR = "#2a2a35";
@@ -99,6 +120,7 @@ const TAB_LABELS: ReadonlyArray<readonly [MenuTab, string]> = [
     [MenuTab.CULTIVATION, "Tu Luyện"],
     [MenuTab.TECHNIQUES, "Công Pháp"],
     [MenuTab.ARTIFACTS, "Pháp Bảo"],
+    [MenuTab.QUESTS, "Nhiệm Vụ"],
     [MenuTab.SETTINGS, "Cài Đặt"],
 ];
 
@@ -112,6 +134,7 @@ const TAB_PLACEHOLDERS: Readonly<Record<MenuTab, string>> = {
     [MenuTab.CULTIVATION]: "TU LUYỆN",
     [MenuTab.TECHNIQUES]: "CÔNG PHÁP",
     [MenuTab.ARTIFACTS]: "PHÁP BẢO",
+    [MenuTab.QUESTS]: "NHIỆM VỤ",
     [MenuTab.SETTINGS]: "CÀI ĐẶT",
 };
 
@@ -165,6 +188,7 @@ export class BottomMenu {
     private cultivationSystem: CultivationSystem;
     private inventory: Inventory;
     private equipmentManager: EquipmentManager;
+    private equipmentEnhancementManager: EquipmentEnhancementManager;
     private equipmentSalvageManager: EquipmentSalvageManager;
     private equipmentStatUnlockManager: EquipmentStatUnlockManager;
     private equipmentRerollManager: EquipmentRerollManager;
@@ -178,6 +202,18 @@ export class BottomMenu {
     private buffManager: BuffManager;
     private getSpiritStone: () => number;
     private saveManager: SaveManager;
+    private eventBus: GameEventBus;
+    private questManager: QuestManager;
+    private achievementManager: AchievementManager;
+    private dailyTaskManager: DailyTaskManager;
+    private audioManager: AudioManager;
+    private tutorialManager: TutorialManager;
+    private tutorialOverlay: Container;
+    private tutorialText: Text;
+    private renderedTutorialVersion: number;
+    private visualSettingsManager: VisualSettingsManager;
+    private renderedVisualSettingsVersion: number;
+    private notificationManager: NotificationManager;
     private onPersistentStateChanged: () => void;
     private container: Container;
     private panel: Container;
@@ -206,6 +242,7 @@ export class BottomMenu {
     private selectedAlchemyCatalysts: Map<string, string | undefined>;
     private lastPillCraftResult: PillCraftResult | null;
     private saveStatusMessage: string;
+    private pendingResetConfirmation: boolean;
 
     private characterPrimaryStatsText: Text | null;
     private characterSecondaryStatsText: Text | null;
@@ -221,6 +258,7 @@ export class BottomMenu {
         cultivationSystem: CultivationSystem,
         inventory: Inventory,
         equipmentManager: EquipmentManager,
+        equipmentEnhancementManager: EquipmentEnhancementManager,
         equipmentSalvageManager: EquipmentSalvageManager,
         equipmentStatUnlockManager: EquipmentStatUnlockManager,
         equipmentRerollManager: EquipmentRerollManager,
@@ -234,6 +272,14 @@ export class BottomMenu {
         buffManager: BuffManager,
         getSpiritStone: () => number,
         saveManager: SaveManager,
+        eventBus: GameEventBus,
+        questManager: QuestManager,
+        achievementManager: AchievementManager,
+        dailyTaskManager: DailyTaskManager,
+        audioManager: AudioManager,
+        tutorialManager: TutorialManager,
+        visualSettingsManager: VisualSettingsManager,
+        notificationManager: NotificationManager,
         onPersistentStateChanged: () => void,
     ) {
         this.app = app;
@@ -242,6 +288,7 @@ export class BottomMenu {
         this.cultivationSystem = cultivationSystem;
         this.inventory = inventory;
         this.equipmentManager = equipmentManager;
+        this.equipmentEnhancementManager = equipmentEnhancementManager;
         this.equipmentSalvageManager = equipmentSalvageManager;
         this.equipmentStatUnlockManager = equipmentStatUnlockManager;
         this.equipmentRerollManager = equipmentRerollManager;
@@ -255,6 +302,14 @@ export class BottomMenu {
         this.buffManager = buffManager;
         this.getSpiritStone = getSpiritStone;
         this.saveManager = saveManager;
+        this.eventBus = eventBus;
+        this.questManager = questManager;
+        this.achievementManager = achievementManager;
+        this.dailyTaskManager = dailyTaskManager;
+        this.audioManager = audioManager;
+        this.tutorialManager = tutorialManager;
+        this.visualSettingsManager = visualSettingsManager;
+        this.notificationManager = notificationManager;
         this.onPersistentStateChanged = onPersistentStateChanged;
         this.container = new Container();
         this.tabContainer = new Container();
@@ -262,7 +317,7 @@ export class BottomMenu {
         this.activeTab = MenuTab.CHARACTER;
         this.panel = this.createPanel();
         this.toggleButtonText = new Text({
-            text: "MENU",
+            text: "TRÌNH ĐƠN",
             style: {
                 fill: "#ffffff",
                 fontSize: 14,
@@ -270,6 +325,10 @@ export class BottomMenu {
             },
         });
         this.toggleButton = this.createToggleButton();
+        this.tutorialText = new Text({ text: "", style: { fill: GameTheme.colors.text, fontSize: 12, fontWeight: "bold" } });
+        this.tutorialOverlay = this.createTutorialOverlay();
+        this.renderedTutorialVersion = -1;
+        this.renderedVisualSettingsVersion = -1;
         this.openState = false;
         this.refreshTimer = 0;
         this.renderedInventoryVersion = -1;
@@ -290,6 +349,7 @@ export class BottomMenu {
         this.selectedAlchemyCatalysts = new Map();
         this.lastPillCraftResult = null;
         this.saveStatusMessage = "";
+        this.pendingResetConfirmation = false;
 
         this.characterPrimaryStatsText = null;
         this.characterSecondaryStatsText = null;
@@ -300,11 +360,14 @@ export class BottomMenu {
 
         this.container.addChild(this.panel);
         this.container.addChild(this.toggleButton);
+        this.container.addChild(this.tutorialOverlay);
 
         this.renderActiveTab();
 
         this.app.ticker.add((ticker) => {
             this.update(ticker.deltaMS);
+            this.updateTutorialOverlay();
+            this.applyVisualSettings();
         });
     }
 
@@ -319,8 +382,17 @@ export class BottomMenu {
 
         this.openState = true;
         this.panel.visible = true;
-        this.toggleButtonText.text = "CLOSE";
+        this.panel.alpha = 0;
+        this.panel.y = GAME_HEIGHT + 16;
+        this.toggleButtonText.text = "ĐÓNG";
         this.app.renderer.resize(GAME_WIDTH, OPEN_HEIGHT);
+        gsap.killTweensOf(this.panel);
+        gsap.to(this.panel, {
+            alpha: 1,
+            y: GAME_HEIGHT,
+            duration: GameTheme.animation.normal,
+            ease: "power2.out",
+        });
 
         this.refreshTimer = 0;
         if (this.activeTab === MenuTab.CHARACTER) {
@@ -366,9 +438,18 @@ export class BottomMenu {
         }
 
         this.openState = false;
-        this.panel.visible = false;
-        this.toggleButtonText.text = "MENU";
-        this.app.renderer.resize(GAME_WIDTH, GAME_HEIGHT);
+        this.toggleButtonText.text = "TRÌNH ĐƠN";
+        gsap.killTweensOf(this.panel);
+        gsap.to(this.panel, {
+            alpha: 0,
+            y: GAME_HEIGHT + 16,
+            duration: GameTheme.animation.fast,
+            ease: "power2.in",
+            onComplete: () => {
+                this.panel.visible = false;
+                this.app.renderer.resize(GAME_WIDTH, GAME_HEIGHT);
+            },
+        });
     }
 
     public toggle(): void {
@@ -384,14 +465,58 @@ export class BottomMenu {
         return this.openState;
     }
 
+    private createTutorialOverlay(): Container {
+        const overlay = new Container();
+        const background = new Graphics()
+            .roundRect(0, 0, 420, 62, 8)
+            .fill({ color: GameTheme.colors.panel, alpha: 0.96 })
+            .stroke({ color: GameTheme.colors.jade, width: 2 });
+        const skip = this.createMenuActionButton("BỎ QUA", 72, 22, () => {
+            this.tutorialManager.skip();
+            this.saveManager.requestSave();
+            this.updateTutorialOverlay();
+        }, "#9ba7ad", 9);
+        const next = this.createMenuActionButton("TIẾP", 56, 22, () => {
+            const step = this.tutorialManager.getCurrentStep();
+            if (step && !step.eventType) this.tutorialManager.advance();
+            this.saveManager.requestSave();
+            this.updateTutorialOverlay();
+        }, "#52d6a2", 9);
+        this.tutorialText.position.set(10, 8);
+        skip.position.set(338, 34);
+        next.position.set(274, 34);
+        overlay.position.set(430, 102);
+        overlay.addChild(background, this.tutorialText, next, skip);
+        return overlay;
+    }
+
+    private updateTutorialOverlay(): void {
+        if (this.renderedTutorialVersion === this.tutorialManager.getVersion()) return;
+        this.renderedTutorialVersion = this.tutorialManager.getVersion();
+        const step = this.tutorialManager.getCurrentStep();
+        this.tutorialOverlay.visible = Boolean(step);
+        if (step) {
+            this.tutorialText.text = `${step.title}\n${step.description}`;
+        }
+    }
+
+    private applyVisualSettings(): void {
+        if (this.renderedVisualSettingsVersion === this.visualSettingsManager.getVersion()) return;
+        this.renderedVisualSettingsVersion = this.visualSettingsManager.getVersion();
+        const settings = this.visualSettingsManager.getSettings();
+        this.tabContainer.scale.set(settings.uiScale);
+        this.tutorialOverlay.scale.set(settings.uiScale);
+        this.panel.alpha = settings.highContrast ? 1 : this.panel.alpha;
+    }
+
     private createPanel(): Container {
         const panel = new Container();
         const background = new Graphics()
             .rect(0, 0, GAME_WIDTH, MENU_HEIGHT)
-            .fill({ color: "#20202a" })
-            .stroke({ color: "#555566", width: 1 });
+            .fill({ color: GameTheme.colors.panel })
+            .stroke({ color: GameTheme.colors.gold, width: 1, alpha: 0.45 });
         const title = new Text({
-            text: "MENU",
+            text: "TRÌNH ĐƠN",
             style: {
                 fill: "#ffffff",
                 fontSize: 22,
@@ -408,12 +533,15 @@ export class BottomMenu {
         tabNavigation.x = 20;
         tabNavigation.y = 55;
         this.tabContainer.x = 20;
-        this.tabContainer.y = 120;
+        this.tabContainer.y = 145;
 
         TAB_LABELS.forEach(([tab, label], index) => {
             const button = this.createTabButton(label, tab);
 
-            button.x = index * (TAB_BUTTON_WIDTH + TAB_BUTTON_GAP);
+            const column = index % 6;
+            const row = Math.floor(index / 6);
+            button.x = column * (TAB_BUTTON_WIDTH + TAB_BUTTON_GAP);
+            button.y = row * (TAB_BUTTON_HEIGHT + TAB_BUTTON_GAP);
             tabNavigation.addChild(button);
         });
 
@@ -465,6 +593,7 @@ export class BottomMenu {
         }
 
         this.activeTab = tab;
+        this.tutorialManager.notifyTarget(tab);
         this.refreshTimer = 0;
         this.renderActiveTab();
         this.updateTabButtonStyles();
@@ -530,6 +659,11 @@ export class BottomMenu {
             return;
         }
 
+        if (this.activeTab === MenuTab.QUESTS) {
+            this.renderQuestTab();
+            return;
+        }
+
         const content = new Text({
             text: TAB_PLACEHOLDERS[this.activeTab],
             style: {
@@ -542,6 +676,58 @@ export class BottomMenu {
         this.tabContainer.addChild(content);
     }
 
+    private renderQuestTab(): void {
+        this.tabContainer.removeChildren();
+        this.tabContainer.addChild(this.createContentText("NHIỆM VỤ", 0, 24));
+        this.questManager.getEntries().forEach(({ definition, state }, index) => {
+            const x = (index % 3) * 410;
+            const y = 38 + Math.floor(index / 3) * 82;
+            const text = this.createContentText(
+                `${state.completed ? "✓" : "○"} ${definition.name}\n` +
+                `${definition.description}: ${state.progress}/${definition.target}`,
+                y,
+                12,
+            );
+            text.x = x;
+            this.tabContainer.addChild(text);
+            if (state.completed && !state.claimed) {
+                const button = this.createMenuActionButton("NHẬN", 72, 22, () => {
+                    this.questManager.claim(definition.id);
+                    this.saveManager.requestSave();
+                    this.renderQuestTab();
+                }, "#52d6a2", 10);
+                button.position.set(x + 300, y + 10);
+                this.tabContainer.addChild(button);
+            }
+        });
+        const dailyText = this.createContentText(
+            "HÀNG NGÀY\n" + this.dailyTaskManager.getStates().map((state) =>
+                `${state.progress >= state.target ? "✓" : "○"} ${state.name} ${state.progress}/${state.target}`,
+            ).join(" | "),
+            205,
+            11,
+        );
+        const achievementText = this.createContentText(
+            "THÀNH TỰU: " + this.achievementManager.getStates()
+                .map((state) => `${state.unlocked ? "★" : "☆"} ${state.name}`)
+                .join(" | "),
+            250,
+            10,
+        );
+        this.tabContainer.addChild(dailyText, achievementText);
+        const claimableDaily = this.dailyTaskManager.getStates()
+            .filter((state) => !state.claimed && state.progress >= state.target);
+        if (claimableDaily.length > 0) {
+            const claimDailyButton = this.createMenuActionButton("NHẬN THƯỞNG NGÀY", 160, 24, () => {
+                claimableDaily.forEach((state) => this.dailyTaskManager.claim(state.id));
+                this.saveManager.requestSave();
+                this.renderQuestTab();
+            }, "#e8c36a", 10);
+            claimDailyButton.position.set(1040, 204);
+            this.tabContainer.addChild(claimDailyButton);
+        }
+    }
+
     private renderSettingsTab(): void {
         this.tabContainer.removeChildren();
 
@@ -551,10 +737,17 @@ export class BottomMenu {
             24,
         );
         const lastSavedAt = this.saveManager.getLastSavedAt();
+        const audio = this.audioManager.getSettings();
+        const visual = this.visualSettingsManager.getSettings();
         const info = this.createContentText(
             [
-                `Save Version: ${CURRENT_SAVE_VERSION}`,
-                `Last Save: ${lastSavedAt
+                `Phiên bản game: ${GAME_VERSION}`,
+                `Phiên bản lưu: ${CURRENT_SAVE_VERSION}`,
+                `Âm thanh: ${audio.muted ? "Tắt" : "Bật"} | Tổng ${Math.round(audio.masterVolume * 100)}% | ` +
+                    `Nhạc ${Math.round(audio.musicVolume * 100)}% | SFX ${Math.round(audio.sfxVolume * 100)}%`,
+                `VFX: ${visual.vfxQuality.toUpperCase()} | Giảm chuyển động: ${visual.reduceMotion ? "Bật" : "Tắt"} | ` +
+                    `Tương phản cao: ${visual.highContrast ? "Bật" : "Tắt"} | UI ${Math.round(visual.uiScale * 100)}%`,
+                `Lần lưu cuối: ${lastSavedAt
                     ? new Date(lastSavedAt).toLocaleTimeString("vi-VN")
                     : "Chưa có"}`,
                 this.saveStatusMessage,
@@ -597,28 +790,106 @@ export class BottomMenu {
             34,
             () => {
                 this.saveManager.deleteSave();
-                this.saveStatusMessage = "Đã xóa save; runtime được giữ nguyên";
+                this.saveStatusMessage = "Đã xóa bản lưu; tiến trình hiện tại được giữ nguyên";
                 this.renderSettingsTab();
             },
             "#fca5a5",
         );
         const resetButton = this.createMenuActionButton(
-            "RESET GAME",
+            this.pendingResetConfirmation ? "XÁC NHẬN XÓA" : "RESET GAME",
             150,
             34,
             () => {
+                if (!this.pendingResetConfirmation) {
+                    this.pendingResetConfirmation = true;
+                    this.saveStatusMessage = "Bạn chắc chắn muốn xóa toàn bộ tiến trình?";
+                    this.renderSettingsTab();
+                    return;
+                }
                 this.saveManager.resetPersistentProgress();
                 this.onPersistentStateChanged();
-                this.saveStatusMessage = "Đã reset permanent progress";
+                this.pendingResetConfirmation = false;
+                this.saveStatusMessage = "Đã xóa toàn bộ tiến trình";
                 this.renderSettingsTab();
             },
             "#fbbf24",
         );
+        const masterButton = this.createMenuActionButton("TỔNG +10%", 120, 30, () => {
+            this.audioManager.setSettings({ masterVolume: (audio.masterVolume + 0.1) % 1.1 });
+            this.saveManager.requestSave(); this.renderSettingsTab();
+        });
+        const musicButton = this.createMenuActionButton("NHẠC +10%", 120, 30, () => {
+            this.audioManager.setSettings({ musicVolume: (audio.musicVolume + 0.1) % 1.1 });
+            this.saveManager.requestSave(); this.renderSettingsTab();
+        });
+        const sfxButton = this.createMenuActionButton("SFX +10%", 120, 30, () => {
+            this.audioManager.setSettings({ sfxVolume: (audio.sfxVolume + 0.1) % 1.1 });
+            this.saveManager.requestSave(); this.renderSettingsTab();
+        });
+        const muteButton = this.createMenuActionButton(audio.muted ? "BẬT ÂM" : "TẮT ÂM", 120, 30, () => {
+            this.audioManager.setSettings({ muted: !audio.muted });
+            this.saveManager.requestSave(); this.renderSettingsTab();
+        });
+        const exportButton = this.createMenuActionButton("XUẤT SAVE", 120, 30, () => {
+            const json = this.saveManager.exportSaveJson();
+            if (!json) {
+                this.saveStatusMessage = "Không thể xuất save";
+            } else {
+                const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+                const anchor = document.createElement("a");
+                anchor.href = url;
+                anchor.download = `tien-lo-idle-save-${Date.now()}.json`;
+                anchor.click();
+                URL.revokeObjectURL(url);
+                this.saveStatusMessage = "Đã xuất file save";
+            }
+            this.renderSettingsTab();
+        });
+        const importButton = this.createMenuActionButton("NHẬP SAVE", 120, 30, () => {
+            const json = window.prompt("Dán JSON save để nhập:");
+            if (json === null) return;
+            const result = this.saveManager.importSaveJson(json);
+            this.saveStatusMessage = result.success
+                ? "Nhập save thành công"
+                : `Từ chối save: ${result.reason ?? "không hợp lệ"}`;
+            if (result.success) this.onPersistentStateChanged();
+            this.renderSettingsTab();
+        });
+        const qualityOrder = [VfxQuality.LOW, VfxQuality.MEDIUM, VfxQuality.HIGH];
+        const qualityButton = this.createMenuActionButton("CHẤT LƯỢNG VFX", 140, 30, () => {
+            const next = qualityOrder[(qualityOrder.indexOf(visual.vfxQuality) + 1) % qualityOrder.length];
+            this.visualSettingsManager.setSettings({ vfxQuality: next });
+            this.saveManager.requestSave(); this.renderSettingsTab();
+        });
+        const motionButton = this.createMenuActionButton("GIẢM CHUYỂN ĐỘNG", 155, 30, () => {
+            this.visualSettingsManager.setSettings({ reduceMotion: !visual.reduceMotion });
+            this.saveManager.requestSave(); this.renderSettingsTab();
+        });
+        const contrastButton = this.createMenuActionButton("TƯƠNG PHẢN CAO", 145, 30, () => {
+            this.visualSettingsManager.setSettings({ highContrast: !visual.highContrast });
+            this.saveManager.requestSave(); this.renderSettingsTab();
+        });
+        const scaleOrder = [0.8, 0.9, 1, 1.1, 1.2];
+        const scaleButton = this.createMenuActionButton("TỶ LỆ UI", 110, 30, () => {
+            const currentIndex = scaleOrder.indexOf(visual.uiScale);
+            this.visualSettingsManager.setSettings({ uiScale: scaleOrder[(currentIndex + 1) % scaleOrder.length] });
+            this.saveManager.requestSave(); this.renderSettingsTab();
+        });
 
         saveButton.position.set(0, 115);
         loadButton.position.set(170, 115);
         deleteButton.position.set(340, 115);
         resetButton.position.set(510, 115);
+        masterButton.position.set(700, 115);
+        musicButton.position.set(830, 115);
+        sfxButton.position.set(960, 115);
+        muteButton.position.set(1090, 115);
+        exportButton.position.set(700, 158);
+        importButton.position.set(830, 158);
+        qualityButton.position.set(0, 195);
+        motionButton.position.set(150, 195);
+        contrastButton.position.set(315, 195);
+        scaleButton.position.set(470, 195);
         this.tabContainer.addChild(
             title,
             info,
@@ -626,6 +897,16 @@ export class BottomMenu {
             loadButton,
             deleteButton,
             resetButton,
+            masterButton,
+            musicButton,
+            sfxButton,
+            muteButton,
+            exportButton,
+            importButton,
+            qualityButton,
+            motionButton,
+            contrastButton,
+            scaleButton,
         );
     }
 
@@ -651,6 +932,22 @@ export class BottomMenu {
         );
 
         this.updateCharacterTexts();
+        this.renderTermGlossary();
+    }
+
+    private renderTermGlossary(): void {
+        Object.keys(TERM_TOOLTIPS).forEach((term, index) => {
+            const button = this.createMenuActionButton(term, 140, 26, () => {
+                tooltip.visible = !tooltip.visible;
+            }, "#9ba7ad", 10);
+            const tooltip = new TermTooltip(term);
+            const column = index % 7;
+            button.position.set(column * 170, 170);
+            tooltip.position.set(Math.min(column * 170, 880), 110);
+            button.on("pointerover", () => { tooltip.visible = true; });
+            button.on("pointerout", () => { tooltip.visible = false; });
+            this.tabContainer.addChild(button, tooltip);
+        });
     }
 
     private renderCultivationTab(): void {
@@ -681,6 +978,8 @@ export class BottomMenu {
                 30,
                 () => {
                     if (this.cultivationSystem.breakthrough()) {
+                        this.eventBus.emit({ type: GameEventType.BREAKTHROUGH, amount: 1 });
+                        this.audioManager.playSfx("breakthrough");
                         this.renderActiveTab();
                     } else if (this.cultivationStatusText) {
                         this.cultivationStatusText.text = "Chưa đủ Tu Vi";
@@ -934,6 +1233,33 @@ export class BottomMenu {
                         recipeId,
                         selectedCatalystId,
                     );
+                if (this.lastEquipmentCraftResult.success) {
+                    this.audioManager.playSfx(
+                        this.lastEquipmentCraftResult.rarity === EquipmentRarity.GOLD ||
+                        this.lastEquipmentCraftResult.rarity === EquipmentRarity.RED
+                            ? "rare_craft"
+                            : "craft",
+                    );
+                    this.eventBus.emit({
+                        type: GameEventType.EQUIPMENT_CRAFTED,
+                        amount: 1,
+                        rarity: this.lastEquipmentCraftResult.rarity,
+                    });
+                    if (
+                        this.lastEquipmentCraftResult.rarity === EquipmentRarity.PURPLE ||
+                        this.lastEquipmentCraftResult.rarity === EquipmentRarity.GOLD ||
+                        this.lastEquipmentCraftResult.rarity === EquipmentRarity.RED
+                    ) {
+                        this.notificationManager.notify({
+                            type: NotificationType.RARE_DROP,
+                            title: this.lastEquipmentCraftResult.rarity === EquipmentRarity.RED
+                                ? "HỒNG VẬN TỀ THIÊN!"
+                                : "Trang Bị Hiếm",
+                            message: `${this.lastEquipmentCraftResult.equipment?.definition.name ?? "Trang bị"} ` +
+                                `[${EQUIPMENT_RARITY_LABELS[this.lastEquipmentCraftResult.rarity]}]`,
+                        });
+                    }
+                }
 
                 if (
                     selectedCatalystId &&
@@ -1116,6 +1442,10 @@ export class BottomMenu {
                     recipeId,
                     selectedId,
                 );
+                if (this.lastPillCraftResult.success) {
+                    this.audioManager.playSfx("craft");
+                    this.eventBus.emit({ type: GameEventType.PILL_CRAFTED, amount: 1 });
+                }
                 if (selectedId && !this.inventory.hasItem(selectedId)) {
                     this.selectedAlchemyCatalysts.set(recipeId, undefined);
                 }
@@ -1247,7 +1577,7 @@ export class BottomMenu {
             this.selectedRerollInstanceId = null;
             this.pendingRerollInstanceId = null;
             this.renderOwnedEquipment();
-            this.renderDebugRealmButtons();
+            if (import.meta.env.DEV) this.renderDebugRealmButtons();
         }
         this.renderedEquipmentVersion = this.equipmentManager.getVersion();
         this.renderedEquipmentInventoryVersion = this.inventory.getVersion();
@@ -1277,7 +1607,11 @@ export class BottomMenu {
         }
 
         const definition = equipment.definition;
-        const nameText = this.createContentText(definition.name, 55, 14);
+        const nameText = this.createContentText(
+            `${definition.name} +${equipment.enhancementLevel}`,
+            55,
+            14,
+        );
         const requirementText = this.createContentText(
             `${EQUIPMENT_RARITY_LABELS[equipment.rarity]} | ` +
             `Dòng: ${equipment.rolledStats.length} / ${CURRENT_MAX_STAT_LINE_COUNT} | ` +
@@ -1287,7 +1621,14 @@ export class BottomMenu {
         );
         const modifierText = this.createContentText(
             equipment.rolledStats.map((modifier) =>
-                this.formatStatModifier(modifier),
+                `${this.formatStatModifier(modifier)} -> ` +
+                this.formatStatModifier({
+                    ...modifier,
+                    value: getEffectiveEquipmentStatValue(
+                        modifier.value,
+                        equipment.enhancementLevel,
+                    ),
+                }),
             ).join("\n"),
             92,
             11,
@@ -1330,7 +1671,18 @@ export class BottomMenu {
         );
 
         rerollButton.position.set(x + 170, 142);
-        this.tabContainer.addChild(rerollButton);
+        const enhanceButton = this.createMenuActionButton(
+            equipment.enhancementLevel >= MAX_EQUIPMENT_ENHANCEMENT
+                ? "+10 TỐI ĐA"
+                : `CƯỜNG HÓA +${equipment.enhancementLevel + 1}`,
+            124,
+            24,
+            () => this.enhanceEquipment(equipment.instanceId),
+            "#52d6a2",
+            9,
+        );
+        enhanceButton.position.set(x, 174);
+        this.tabContainer.addChild(rerollButton, enhanceButton);
     }
 
     private renderOwnedEquipment(): void {
@@ -1357,7 +1709,7 @@ export class BottomMenu {
                 .map((modifier) => this.formatStatModifier(modifier))
                 .join(", ");
             const button = this.createMenuActionButton(
-                `${equipment.definition.name} #${shortId}${equippedLabel} ` +
+                `${equipment.definition.name} +${equipment.enhancementLevel} #${shortId}${equippedLabel} ` +
                 `[${equipment.rolledStats.length}/${CURRENT_MAX_STAT_LINE_COUNT}]\n${stats}`,
                 110,
                 32,
@@ -1393,6 +1745,24 @@ export class BottomMenu {
             );
             this.tabContainer.addChild(rerollButton);
         });
+    }
+
+    private enhanceEquipment(instanceId: string): void {
+        const cost = this.equipmentEnhancementManager.getEnhancementCost(instanceId);
+        if (!cost) {
+            this.equipmentStatusMessage = "Trang bị đã cường hóa tối đa.";
+        } else if (this.equipmentEnhancementManager.enhance(instanceId)) {
+            this.eventBus.emit({ type: GameEventType.EQUIPMENT_ENHANCED, amount: 1 });
+            this.equipmentStatusMessage =
+                `Cường hóa +${cost.nextLevel} thành công: ` +
+                `${cost.essence} Tinh Hoa, ${cost.spiritStone} Linh Thạch.`;
+            this.saveManager.requestSave();
+        } else {
+            this.equipmentStatusMessage =
+                `Không đủ tài nguyên: cần ${cost.essence} Tinh Hoa và ` +
+                `${cost.spiritStone} Linh Thạch.`;
+        }
+        this.renderEquipmentTab();
     }
 
     private openRerollDetail(instanceId: string): void {
@@ -1640,6 +2010,7 @@ export class BottomMenu {
 
     private attemptEquip(equipment: EquipmentInstance): void {
         if (this.equipmentManager.equip(equipment)) {
+            this.eventBus.emit({ type: GameEventType.EQUIPMENT_EQUIPPED, amount: 1 });
             this.equipmentStatusMessage =
                 `Đã trang bị ${equipment.definition.name}`;
         } else {
@@ -1847,6 +2218,15 @@ export class BottomMenu {
                     58,
                     13,
                 );
+                const upgradeCost = this.techniqueManager.getUpgradeCost(definition.id);
+                const costText = this.createContentText(
+                    upgradeCost
+                        ? `Tàn Trang: ${this.inventory.getQuantity("technique_fragment")}/${upgradeCost.fragments} | ` +
+                            `Linh Thạch: ${this.getSpiritStone()}/${upgradeCost.spiritStone}`
+                        : "",
+                    126,
+                    10,
+                );
                 const milestoneText = this.createContentText(
                     definition.milestones
                         .map((milestone) => {
@@ -1874,6 +2254,7 @@ export class BottomMenu {
                 nameText.x = x;
                 levelText.x = x;
                 milestoneText.x = x;
+                costText.x = x;
                 levelText.style.fill = state.learned
                     ? "#ffffff"
                     : "#aaaabb";
@@ -1881,6 +2262,7 @@ export class BottomMenu {
                     nameText,
                     levelText,
                     milestoneText,
+                    costText,
                 );
 
                 if (!state.learned || state.level < definition.maxLevel) {
@@ -1928,9 +2310,14 @@ export class BottomMenu {
             : this.techniqueManager.learnTechnique(techniqueId);
 
         if (changed && definition) {
+            this.eventBus.emit({ type: GameEventType.TECHNIQUE_UPGRADED, amount: 1 });
             this.techniqueStatusMessage = learned
                 ? `Đã nâng cấp ${definition.name}`
                 : `Đã học ${definition.name}`;
+            this.renderTechniqueTab();
+            this.saveManager.requestSave();
+        } else if (definition) {
+            this.techniqueStatusMessage = "Không đủ Tàn Trang Công Pháp hoặc Linh Thạch";
             this.renderTechniqueTab();
         }
     }
@@ -1986,11 +2373,17 @@ export class BottomMenu {
                     96,
                     12,
                 );
+                const passiveText = this.createContentText(
+                    `${"★".repeat(state.star)} | Nội tại: ${definition.passive.description}`,
+                    124,
+                    11,
+                );
 
                 nameText.x = x;
                 rarityText.x = x;
                 ownershipText.x = x;
                 modifierText.x = x;
+                passiveText.x = x;
                 nameText.style.fill =
                     ARTIFACT_RARITY_COLORS[definition.rarity];
                 rarityText.style.fill = "#aaaabb";
@@ -2000,6 +2393,7 @@ export class BottomMenu {
                     rarityText,
                     ownershipText,
                     modifierText,
+                    passiveText,
                 );
 
                 this.renderArtifactActions(definition.id, state.owned, state.equipped, x);
@@ -2028,7 +2422,7 @@ export class BottomMenu {
         );
 
         debugButton.position.set(x, 142);
-        this.tabContainer.addChild(debugButton);
+        if (import.meta.env.DEV) this.tabContainer.addChild(debugButton);
 
         if (!owned) {
             if (this.artifactManager.canCraft(artifactId)) {
@@ -2038,6 +2432,8 @@ export class BottomMenu {
                     28,
                     () => {
                         if (this.artifactManager.craft(artifactId)) {
+                            this.audioManager.playSfx("artifact_craft");
+                            this.eventBus.emit({ type: GameEventType.ARTIFACT_CRAFTED, amount: 1 });
                             this.artifactStatusMessage = "Ghép Pháp Bảo thành công";
                             this.renderArtifactTab();
                         }
@@ -2050,7 +2446,7 @@ export class BottomMenu {
                 this.tabContainer.addChild(craftButton);
             } else {
                 const insufficientText = this.createContentText(
-                    "Chưa đủ mảnh",
+                    "Hãy thu thập 40 mảnh để ghép Pháp Bảo.",
                     148,
                     12,
                 );
@@ -2085,6 +2481,26 @@ export class BottomMenu {
 
         actionButton.position.set(x + 115, 142);
         this.tabContainer.addChild(actionButton);
+        const state = this.artifactManager.getArtifactState(artifactId);
+        const starCost = this.artifactManager.getStarUpgradeCost(artifactId);
+        const starButton = this.createMenuActionButton(
+            starCost === null ? "5 SAO" : `NÂNG SAO ${state.fragmentCount}/${starCost}`,
+            155,
+            28,
+            () => {
+                if (this.artifactManager.upgradeStar(artifactId)) {
+                    this.artifactStatusMessage = `Nâng ${state.star + 1} sao thành công`;
+                    this.saveManager.requestSave();
+                } else {
+                    this.artifactStatusMessage = "Không đủ mảnh Pháp Bảo tương ứng";
+                }
+                this.renderArtifactTab();
+            },
+            "#e8c36a",
+            11,
+        );
+        starButton.position.set(x + 230, 142);
+        this.tabContainer.addChild(starButton);
     }
 
     private renderInventoryTab(): void {
@@ -2115,7 +2531,7 @@ export class BottomMenu {
             equipmentInstances.length === 0
         ) {
             this.tabContainer.addChild(
-                this.createContentText("Túi đồ đang trống.", 38, 16),
+                this.createContentText("Chưa có vật phẩm.", 38, 16),
             );
         } else {
             inventoryItems.forEach((inventoryItem) => {
@@ -2127,7 +2543,7 @@ export class BottomMenu {
                 );
                 const detailsText = this.createContentText(
                     isMaterialDefinition(inventoryItem.item)
-                        ? `${MATERIAL_CATEGORY_LABELS[inventoryItem.item.materialCategory]} | Tier ${inventoryItem.item.tier}`
+                        ? `${MATERIAL_CATEGORY_LABELS[inventoryItem.item.materialCategory]} | Bậc ${inventoryItem.item.tier}`
                         : `${ITEM_TYPE_LABELS[inventoryItem.item.type]} | ${ITEM_RARITY_LABELS[inventoryItem.item.rarity]}`,
                     y + 17,
                     11,
@@ -2183,10 +2599,13 @@ export class BottomMenu {
                     65,
                     22,
                     () => {
-                        this.alchemyManager.usePill(
+                        const used = this.alchemyManager.usePill(
                             stack.definitionId,
                             stack.rarity,
                         );
+                        if (used) {
+                            this.eventBus.emit({ type: GameEventType.PILL_USED, amount: 1 });
+                        }
                         this.renderInventoryTab();
                     },
                     "#ffffff",
@@ -2261,7 +2680,7 @@ export class BottomMenu {
 
         addButton.position.set(940, 0);
         removeButton.position.set(1090, 0);
-        this.tabContainer.addChild(addButton, removeButton);
+        if (import.meta.env.DEV) this.tabContainer.addChild(addButton, removeButton);
 
         this.renderedInventoryVersion = this.inventory.getVersion();
     }
@@ -2342,6 +2761,7 @@ export class BottomMenu {
             20,
             () => {
                 if (this.equipmentManager.equip(equipment)) {
+                    this.eventBus.emit({ type: GameEventType.EQUIPMENT_EQUIPPED, amount: 1 });
                     this.inventoryStatusMessage =
                         `Đã trang bị ${equipment.definition.name}`;
                 } else {
@@ -2482,7 +2902,10 @@ export class BottomMenu {
         text.position.set(width / 2, height / 2);
 
         button.addChild(background, text);
-        button.on("pointertap", action);
+        button.on("pointertap", () => {
+            this.audioManager.playSfx("button");
+            action();
+        });
 
         return button;
     }
@@ -2642,7 +3065,7 @@ export class BottomMenu {
     }
 
     private formatNumber(value: number): string {
-        return value.toFixed(2);
+        return formatGameNumber(value);
     }
 
     private updateTabButtonStyles(): void {

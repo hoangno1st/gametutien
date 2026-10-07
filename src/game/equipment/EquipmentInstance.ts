@@ -11,6 +11,7 @@ export interface EquipmentInstance {
     rolledStats: StatModifier[];
     unlockedStatLineCount: number;
     lockedStatIndices: number[];
+    enhancementLevel: number;
 }
 
 let fallbackInstanceSequence = 0;
@@ -36,6 +37,7 @@ export function createEquipmentInstance(
         rolledStats,
         unlockedStatLineCount: INITIAL_STAT_LINE_COUNT,
         lockedStatIndices: [],
+        enhancementLevel: 0,
     };
 }
 

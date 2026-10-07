@@ -30,8 +30,10 @@ export class StageSystem {
 
     public nextStage(): void {
         if (this.stage >= 50) {
-            this.chapter += 1;
-            this.stage = 1;
+            if (this.chapter < MAX_CHAPTER) {
+                this.chapter += 1;
+                this.stage = 1;
+            }
 
             return;
         }
@@ -49,6 +51,7 @@ export class StageSystem {
             !Number.isInteger(chapter) ||
             !Number.isInteger(stage) ||
             chapter < 1 ||
+            chapter > MAX_CHAPTER ||
             stage < 1 ||
             stage > 50
         ) {
@@ -64,8 +67,7 @@ export class StageSystem {
         const isBossStage =
             this.stage === 50;
 
-        const chapterDifficulty =
-            this.chapter - 1;
+        const chapterDefinition = getChapterDefinition(this.chapter);
 
         if (isBossStage) {
             return {
@@ -75,12 +77,10 @@ export class StageSystem {
                 enemyCount: 1,
 
                 enemyHp:
-                    1000 +
-                    chapterDifficulty * 1500,
+                    1000 * chapterDefinition.enemyStatMultiplier,
 
                 enemyAttack:
-                    30 +
-                    chapterDifficulty * 20,
+                    30 * chapterDefinition.enemyStatMultiplier,
 
                 enemySpeed: 1,
 
@@ -95,7 +95,7 @@ export class StageSystem {
         chapter = this.chapter,
         stage = this.stage,
     ): StageConfig {
-        const chapterDifficulty = chapter - 1;
+        const chapterDefinition = getChapterDefinition(chapter);
         const stageDifficulty = stage - 1;
 
         const enemyCount =
@@ -105,16 +105,11 @@ export class StageSystem {
             );
 
         const enemyHp =
-            30 +
-            stageDifficulty * 4 +
-            chapterDifficulty * 50;
+            (30 + stageDifficulty * 4) * chapterDefinition.enemyStatMultiplier;
 
         const enemyAttack =
-            4 +
-            Math.floor(
-                stageDifficulty * 0.4,
-            ) +
-            chapterDifficulty * 5;
+            (4 + Math.floor(stageDifficulty * 0.4)) *
+            chapterDefinition.enemyStatMultiplier;
 
         const enemySpeed =
             1.5 +
@@ -123,7 +118,7 @@ export class StageSystem {
                 0.5,
             ) +
             Math.min(
-                chapterDifficulty * 0.05,
+                (chapter - 1) * 0.05,
                 0.5,
             );
 
@@ -141,3 +136,4 @@ export class StageSystem {
         };
     }
 }
+import { getChapterDefinition, MAX_CHAPTER } from "../chapters/chapterData";

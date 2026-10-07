@@ -1,7 +1,15 @@
 import type { Player } from "../entities/Player";
 import type { ArtifactDefinition } from "./Artifact";
+import { ArtifactPassiveType } from "./Artifact";
 import type { ArtifactState } from "./ArtifactState";
-import { ARTIFACT_FRAGMENTS_REQUIRED } from "./artifactConfig";
+import {
+    ARTIFACT_FRAGMENTS_REQUIRED,
+    ARTIFACT_STAR_COSTS,
+    ARTIFACT_STAR_MULTIPLIERS,
+    MAX_ARTIFACT_STAR,
+} from "./artifactConfig";
+import { StatModifierType } from "../stats/StatModifier";
+import { StatType } from "../stats/StatType";
 
 export class ArtifactManager {
     private player: Player;
@@ -27,7 +35,7 @@ export class ArtifactManager {
                 fragmentCount: 0,
                 owned: false,
                 equipped: false,
-                level: 1,
+                star: 1,
             });
         }
     }
@@ -77,6 +85,66 @@ export class ArtifactManager {
 
     public isOwned(artifactId: string): boolean {
         return this.states.get(artifactId)?.owned ?? false;
+    }
+
+    public getStarUpgradeCost(artifactId: string): number | null {
+        const state = this.states.get(artifactId);
+        if (!state?.owned || state.star >= MAX_ARTIFACT_STAR) return null;
+        return ARTIFACT_STAR_COSTS[state.star + 1] ?? null;
+    }
+
+    public canUpgradeStar(artifactId: string): boolean {
+        const state = this.states.get(artifactId);
+        const cost = this.getStarUpgradeCost(artifactId);
+        return Boolean(state && cost !== null && state.fragmentCount >= cost);
+    }
+
+    public upgradeStar(artifactId: string): boolean {
+        const state = this.states.get(artifactId);
+        const definition = this.definitions.get(artifactId);
+        const cost = this.getStarUpgradeCost(artifactId);
+        if (!state || !definition || cost === null || !this.canUpgradeStar(artifactId)) return false;
+        if (state.equipped) this.removeArtifactModifiers(artifactId);
+        state.fragmentCount -= cost;
+        state.star += 1;
+        if (state.equipped) this.addArtifactModifiers(definition);
+        this.player.syncCurrentResourcesWithMaxStats();
+        this.version += 1;
+        return true;
+    }
+
+    public getPassiveValue(artifactId: string): number {
+        const definition = this.definitions.get(artifactId);
+        const state = this.states.get(artifactId);
+        if (!definition || !state) return 0;
+        return definition.passive.baseValue +
+            Math.max(0, state.star - 1) * definition.passive.valuePerStar;
+    }
+
+    public getBossDamageMultiplier(): number {
+        const definition = this.getEquippedArtifact();
+        if (!definition || definition.passive.type !== ArtifactPassiveType.BOSS_DAMAGE) return 1;
+        return 1 + this.getPassiveValue(definition.id);
+    }
+
+    public updateCombatPassives(): void {
+        const modifierId = "artifact:passive:low-hp-attack";
+        const definition = this.getEquippedArtifact();
+        const active = Boolean(definition &&
+            definition.passive.type === ArtifactPassiveType.LOW_HP_ATTACK &&
+            this.player.getHp() / Math.max(1, this.player.getMaxHp()) <=
+                (definition.passive.threshold ?? 0.4));
+        if (active && definition) {
+            this.player.getStatSystem().addModifier({
+                id: modifierId,
+                source: `artifact:${definition.id}:passive`,
+                stat: StatType.ATTACK,
+                type: StatModifierType.PERCENT,
+                value: this.getPassiveValue(definition.id),
+            });
+        } else {
+            this.player.getStatSystem().removeModifier(modifierId);
+        }
     }
 
     public equip(artifactId: string): boolean {
@@ -172,7 +240,7 @@ export class ArtifactManager {
             artifactId: string;
             fragmentCount: number;
             owned: boolean;
-            level: number;
+            star: number;
         }>,
         equippedArtifactId: string | null,
     ): void {
@@ -188,7 +256,7 @@ export class ArtifactManager {
                 fragmentCount: 0,
                 owned: false,
                 equipped: false,
-                level: 1,
+                star: 1,
             });
         }
 
@@ -201,7 +269,7 @@ export class ArtifactManager {
 
             state.fragmentCount = Math.max(0, Math.floor(savedState.fragmentCount));
             state.owned = savedState.owned;
-            state.level = Math.max(1, Math.floor(savedState.level));
+            state.star = Math.min(MAX_ARTIFACT_STAR, Math.max(1, Math.floor(savedState.star)));
         }
 
         const equippedState = equippedArtifactId
@@ -228,13 +296,25 @@ export class ArtifactManager {
     private addArtifactModifiers(
         definition: ArtifactDefinition,
     ): void {
+        const state = this.states.get(definition.id);
+        const starMultiplier = ARTIFACT_STAR_MULTIPLIERS[state?.star ?? 1] ?? 1;
         definition.baseModifiers.forEach((modifier, index) => {
             this.player.getStatSystem().addModifier({
                 ...modifier,
+                value: modifier.value * starMultiplier,
                 id: `artifact:${definition.id}:${index}`,
                 source: `artifact:${definition.id}`,
             });
         });
+        if (definition.passive.type === ArtifactPassiveType.CULTIVATION_BONUS) {
+            this.player.getStatSystem().addModifier({
+                id: `artifact:${definition.id}:passive`,
+                source: `artifact:${definition.id}`,
+                stat: StatType.CULTIVATION_SPEED,
+                type: StatModifierType.FLAT,
+                value: this.getPassiveValue(definition.id),
+            });
+        }
     }
 
     private removeArtifactModifiers(artifactId: string): void {
@@ -245,5 +325,7 @@ export class ArtifactManager {
                 .getStatSystem()
                 .removeModifier(`artifact:${artifactId}:${index}`);
         });
+        this.player.getStatSystem().removeModifier(`artifact:${artifactId}:passive`);
+        this.player.getStatSystem().removeModifier("artifact:passive:low-hp-attack");
     }
 }

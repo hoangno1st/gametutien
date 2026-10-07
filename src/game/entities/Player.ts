@@ -1,33 +1,24 @@
 import {
     AnimatedSprite,
-    Assets,
     Container,
     Text,
     Texture,
 } from "pixi.js";
 import { PlayerStatSystem } from "../stats/PlayerStatSystem";
 import { StatType } from "../stats/StatType";
-
-const HERO_ASSET_PATH =
-    "/assets/hero";
-
-const createFramePaths = (
-    animation: string,
-    frameCount: number,
-): string[] =>
-    Array.from(
-        { length: frameCount },
-        (_, index) =>
-            `${HERO_ASSET_PATH}/${animation}/frame_${index
-                .toString()
-                .padStart(3, "0")}.png`,
-    );
+import { formatGameNumber } from "../utils/NumberFormatter";
+import { AssetKeys } from "../assets/AssetKeys";
+import { gameAssetManager } from "../assets/AssetManager";
+import {
+    PlayerAnimationController,
+    PlayerAnimationState,
+} from "./PlayerAnimationController";
+import type { PlayerAnimationTextures } from "./PlayerAnimationController";
 
 export class Player {
     private container: Container;
     private body: AnimatedSprite;
-    private idleTextures: Texture[];
-    private attackTextures: Texture[];
+    private animationController: PlayerAnimationController;
     private nameText: Text;
     private hpText: Text;
     private mpText: Text;
@@ -37,31 +28,24 @@ export class Player {
     private currentMp: number;
 
     private constructor(
-        idleTextures: Texture[],
-        attackTextures: Texture[],
+        textures: PlayerAnimationTextures,
     ) {
         this.container = new Container();
-
-        this.idleTextures = idleTextures;
-        this.attackTextures =
-            attackTextures;
 
         this.statSystem = new PlayerStatSystem();
         this.currentHp = this.getMaxHp();
         this.currentMp = this.getMaxMp();
 
         this.body = new AnimatedSprite(
-            this.idleTextures,
+            [...textures[PlayerAnimationState.IDLE]],
         );
 
         this.body.anchor.set(0.5);
         this.body.scale.set(1.5);
-        this.body.animationSpeed = 0.08;
-        this.body.loop = true;
-        this.body.play();
+        this.animationController = new PlayerAnimationController(this.body, textures);
 
         this.nameText = new Text({
-            text: "Hero",
+            text: "Tu Sĩ",
             style: {
                 fill: "#ffffff",
                 fontSize: 14,
@@ -104,40 +88,35 @@ export class Player {
     }
 
     public static async create(): Promise<Player> {
-        const [idleTextures, attackTextures] =
-            await Promise.all([
-                Promise.all(
-                    createFramePaths(
-                        "walk",
-                        6,
-                    ).map((path) =>
-                        Assets.load<Texture>(path),
-                    ),
-                ),
-                Promise.all(
-                    createFramePaths(
-                        "slash",
-                        6,
-                    ).map((path) =>
-                        Assets.load<Texture>(path),
-                    ),
-                ),
-            ]);
+        const loadFrames = async (paths: ReadonlyArray<string>): Promise<Texture[]> => {
+            const loaded = await Promise.all(
+                paths.map((path) => gameAssetManager.loadTextureByPath(path)),
+            );
+            return loaded.filter((texture): texture is Texture => texture !== null);
+        };
+        const idle = await loadFrames(AssetKeys.characters.player.idle);
+        const fallback = idle.length > 0 ? idle : [Texture.EMPTY];
+        const [run, attack, skill, hit, death] = await Promise.all([
+            loadFrames(AssetKeys.characters.player.run),
+            loadFrames(AssetKeys.characters.player.attack),
+            loadFrames(AssetKeys.characters.player.skill),
+            loadFrames(AssetKeys.characters.player.hit),
+            loadFrames(AssetKeys.characters.player.death),
+        ]);
+        const textures: PlayerAnimationTextures = {
+            [PlayerAnimationState.IDLE]: fallback,
+            [PlayerAnimationState.RUN]: run.length > 0 ? run : fallback,
+            [PlayerAnimationState.ATTACK]: attack.length > 0 ? attack : fallback,
+            [PlayerAnimationState.SKILL]: skill.length > 0 ? skill : fallback,
+            [PlayerAnimationState.HIT]: hit.length > 0 ? hit : fallback,
+            [PlayerAnimationState.DEATH]: death.length > 0 ? death : fallback,
+        };
 
-        for (
-            const texture of [
-                ...idleTextures,
-                ...attackTextures,
-            ]
-        ) {
+        for (const texture of Object.values(textures).flat()) {
             texture.source.scaleMode =
                 "nearest";
         }
-
-        return new Player(
-            idleTextures,
-            attackTextures,
-        );
+        return new Player(textures);
     }
 
     public setPosition(
@@ -241,21 +220,12 @@ export class Player {
     }
 
     public playAttack(): void {
-        this.body.stop();
-        this.body.textures =
-            this.attackTextures;
-        this.body.loop = false;
-        this.body.animationSpeed = 0.35;
-        this.body.onComplete = () => {
-            this.body.onComplete = undefined;
-            this.body.textures =
-                this.idleTextures;
-            this.body.loop = true;
-            this.body.animationSpeed = 0.08;
-            this.body.play();
-        };
-        this.body.gotoAndPlay(0);
+        this.animationController.playAttack();
     }
+
+    public playRun(): void { this.animationController.playRun(); }
+    public playSkill(): void { this.animationController.playSkill(); }
+    public playIdle(): void { this.animationController.playIdle(); }
 
     public takeDamage(
         damage: number,
@@ -272,6 +242,11 @@ export class Player {
         }
 
         this.updateResourceTexts();
+        if (this.currentHp <= 0) {
+            this.animationController.playDeath();
+        } else {
+            this.animationController.playHit();
+        }
 
         return finalDamage;
     }
@@ -295,6 +270,7 @@ export class Player {
         this.currentHp = this.getMaxHp();
         this.currentMp = this.getMaxMp();
         this.updateResourceTexts();
+        this.animationController.playIdle();
     }
 
     public canSpendMp(amount: number): boolean {
@@ -364,7 +340,7 @@ export class Player {
     }
 
     private formatNumber(value: number): string {
-        return value.toFixed(2);
+        return formatGameNumber(value);
     }
 
     private clampCurrentResources(): void {
